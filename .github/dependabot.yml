@@ -34,6 +34,10 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    ignore:
+      # Stay on Node.js LTS (even major versions); raise the major version deliberately.
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
     groups:
       docker:
         applies-to: version-updates
