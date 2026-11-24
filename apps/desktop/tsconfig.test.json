@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": "src",
+    "outDir": ".test-build"
+  },
+  "include": ["src/native-input.ts", "src/edit-queue.ts", "src/delta-publisher.ts", "src/input-metrics.ts", "src/pen-presets.ts"]
+}

@@ -1,0 +1,33 @@
+{
+  "name": "livemitschrift",
+  "private": true,
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "homepage": "https://github.com/andreaszsr/livemitschrift",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/andreaszsr/livemitschrift.git"
+  },
+  "type": "module",
+  "workspaces": [
+    "packages/core",
+    "packages/pdf",
+    "packages/ui",
+    "apps/desktop",
+    "frontend"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace livemitschrift-frontend && npm run build --workspace @livemitschrift/desktop",
+    "test": "npm run test --workspace @livemitschrift/core && npm run test --workspace livemitschrift-frontend && npm run test --workspace @livemitschrift/desktop && npm run test --workspace @livemitschrift/ui && npm run test --workspace @livemitschrift/pdf",
+    "desktop:dev": "npm run icons --workspace @livemitschrift/desktop && npm run tauri --workspace @livemitschrift/desktop -- dev",
+    "desktop:build": "npm run icons --workspace @livemitschrift/desktop && npm run tauri --workspace @livemitschrift/desktop -- build"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.4",
+    "typescript": "6.0.3",
+    "vite": "8.3.5"
+  }
+}

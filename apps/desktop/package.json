@@ -1,0 +1,23 @@
+{
+  "name": "@livemitschrift/desktop",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "predev": "npm run build --workspace @livemitschrift/core && npm run build --workspace @livemitschrift/pdf && npm run build --workspace @livemitschrift/ui",
+    "dev": "vite",
+    "prebuild": "npm run build --workspace @livemitschrift/core && npm run build --workspace @livemitschrift/pdf && npm run build --workspace @livemitschrift/ui",
+    "build": "tsc --noEmit && vite build",
+    "test": "npm run build && rm -rf .test-build && tsc -p tsconfig.test.json && node --test tests/*.test.mjs",
+    "icons": "tauri icon assets/icon.svg --output src-tauri/icons",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@livemitschrift/core": "*",
+    "@livemitschrift/pdf": "*",
+    "@livemitschrift/ui": "*",
+    "@tauri-apps/api": "2.12.4",
+    "uqr": "0.1.3"
+  }
+}

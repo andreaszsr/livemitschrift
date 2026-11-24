@@ -1,0 +1,78 @@
+name: livemitschrift
+services:
+  backend:
+    image: ${LIVEMITSCHRIFT_IMAGE:?Set a versioned GHCR image or a local test image}
+    restart: unless-stopped
+    environment:
+      LIVEMITSCHRIFT_PUBLIC_URL: https://${DOMAIN:?Set your public domain}
+      LIVEMITSCHRIFT_PUBLISHER_KEY_FILE: /run/secrets/publisher_key
+      LIVEMITSCHRIFT_TRUSTED_PROXIES: 172.30.81.2
+      LIVEMITSCHRIFT_PRIVACY_URL: ${PRIVACY_URL:-}
+      LIVEMITSCHRIFT_LOG_LEVEL: ${LOG_LEVEL:-warning}
+      # Optional privacy notice: put an HTML fragment at ./config/datenschutz.html.
+      LIVEMITSCHRIFT_PRIVACY_FILE: /config/datenschutz.html
+    secrets:
+      - publisher_key
+    volumes:
+      - notes:/data
+      - ./config:/config:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 1g
+    pids_limit: 128
+    networks:
+      private:
+        ipv4_address: 172.30.81.3
+    logging:
+      options:
+        max-size: 10m
+        max-file: '3'
+  caddy:
+    image: caddy:2.11.6-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?Set your public domain}
+      ACME_EMAIL: ${ACME_EMAIL:?Set your certificate contact email}
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - certificates:/data
+      - caddy_config:/config
+    networks:
+      private:
+        ipv4_address: 172.30.81.2
+      internet:
+    depends_on:
+      backend:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    mem_limit: 128m
+    pids_limit: 128
+    security_opt: [no-new-privileges:true]
+    logging:
+      options:
+        max-size: 10m
+        max-file: '3'
+secrets:
+  publisher_key:
+    file: ./secrets/publisher.key
+volumes:
+  notes:
+  certificates:
+  caddy_config:
+networks:
+  private:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.81.0/24
+  internet:
