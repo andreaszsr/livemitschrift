@@ -3,10 +3,6 @@
 LiveMitschrift is usable in lectures today. The items below are planned. The
 order is a rough priority, not a promise.
 
-## Before the first tagged release
-
-- **First public container image on GHCR.**
-
 ## Next
 
 - **Signed and notarized macOS download.** This needs an Apple Developer ID; see

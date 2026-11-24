@@ -12,8 +12,8 @@ and the macOS bundle both include the license file.
   - require reviewers;
   - restrict it to version tags;
   - protect release tags against replacement and deletion.
-- After the first image is published, make the GHCR package public so it can be
-  pulled anonymously.
+- The GHCR package must be public so it can be pulled anonymously. For v0.1.0 it
+  inherited this from the public repository; check it after renaming or moving.
 - The workflows pin each action to a commit and use only the scoped automatic
   `GITHUB_TOKEN`. CI needs no personal token and no publisher key.
 
