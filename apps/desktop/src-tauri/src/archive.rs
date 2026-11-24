@@ -123,8 +123,10 @@ impl Database {
         for index in 0..archive.len() {
             let entry = archive.by_index(index)?;
             total += entry.size();
-            let limit = if entry.name() == "notebook.json" { MAX_MANIFEST } else { MAX_PDF_BYTES as u64 };
-            if !names.insert(entry.name().to_owned())
+            // zip 9 rejects names it cannot decode unambiguously instead of guessing.
+            let name = entry.name()?.into_owned();
+            let limit = if name == "notebook.json" { MAX_MANIFEST } else { MAX_PDF_BYTES as u64 };
+            if !names.insert(name)
                 || entry.size() > limit
                 || total > MAX_MANIFEST + MAX_NOTEBOOK_PDF_BYTES as u64
             {
