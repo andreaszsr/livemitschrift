@@ -17,7 +17,7 @@
     "@livemitschrift/core": "*",
     "@livemitschrift/pdf": "*",
     "@livemitschrift/ui": "*",
-    "@tauri-apps/api": "2.12.4",
+    "@tauri-apps/api": "2.12.5",
     "uqr": "0.1.3"
   }
 }
