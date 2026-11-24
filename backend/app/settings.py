@@ -1,10 +1,13 @@
 """Validated deployment settings; defaults bind the application to local use."""
 from dataclasses import dataclass
 import os
+import re
 from pathlib import Path
 from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[2]
+# Canonical public repository; operators of modified versions set LIVEMITSCHRIFT_SOURCE_URL.
+UPSTREAM_SOURCE = 'https://github.com/andreaszsr/livemitschrift'
 NATIVE_ORIGINS = ('tauri://localhost', 'http://tauri.localhost', 'https://tauri.localhost')
 
 
@@ -23,6 +26,8 @@ class Settings:
     public_url: str | None = None
     # Optional link to the operator's privacy notice, shown in the reader menu.
     privacy_url: str | None = None
+    # AGPL-3.0 section 13: readers get a link to the source of the running version.
+    source_url: str = UPSTREAM_SOURCE
     max_connections: int = 128
     max_readers: int = 96
     max_http: int = 32
@@ -43,7 +48,7 @@ class Settings:
             url = urlsplit(privacy)
             if url.scheme != 'https' or not url.hostname or url.username or url.password or any(c in privacy for c in '"<>\' \n'):
                 raise ValueError('LIVEMITSCHRIFT_PRIVACY_URL must be an HTTPS URL.')
-        return cls(public_url=public, privacy_url=privacy,
+        return cls(public_url=public, privacy_url=privacy, source_url=configured_source_url(),
                    max_connections=bounded_integer('LIVEMITSCHRIFT_MAX_CONNECTIONS', 128, 60, 512),
                    max_readers=bounded_integer('LIVEMITSCHRIFT_MAX_READERS', 96, 50, 480),
                    max_http=bounded_integer('LIVEMITSCHRIFT_MAX_HTTP', 32, 4, 128),
@@ -61,6 +66,22 @@ class Settings:
     @property
     def cors_origins(self) -> tuple[str, ...]:
         return (*NATIVE_ORIGINS, self.public_url) if self.public_url else (*NATIVE_ORIGINS, 'http://127.0.0.1:1420', 'http://localhost:1420')
+
+
+def configured_source_url() -> str:
+    """An explicit source URL wins; otherwise point upstream at the revision baked into the image."""
+    explicit = os.environ.get('LIVEMITSCHRIFT_SOURCE_URL') or None
+    if explicit:
+        url = urlsplit(explicit)
+        if url.scheme != 'https' or not url.hostname or url.username or url.password or any(c in explicit for c in '"<>\' \n'):
+            raise ValueError('LIVEMITSCHRIFT_SOURCE_URL must be an HTTPS URL.')
+        return explicit
+    revision = os.environ.get('LIVEMITSCHRIFT_SOURCE_REVISION') or None
+    if revision is None:
+        return UPSTREAM_SOURCE
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,63}', revision):
+        raise ValueError('LIVEMITSCHRIFT_SOURCE_REVISION must be a tag or commit name.')
+    return f'{UPSTREAM_SOURCE}/tree/{revision}'
 
 
 def server_directory() -> Path:

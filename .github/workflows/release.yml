@@ -47,10 +47,14 @@ jobs:
           push: true
           tags: ${{ env.IMAGE }}:${{ env.VERSION }}
           labels: org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          build-args: LIVEMITSCHRIFT_SOURCE_REVISION=${{ github.ref_name }}
           provenance: mode=max
           sbom: true
   mac:
     needs: tests
+    # Signed macOS downloads need Apple credentials; enable with the repository variable
+    # MACOS_RELEASE=true once the release environment has them (docs/releasing.md).
+    if: vars.MACOS_RELEASE == 'true'
     runs-on: macos-latest
     environment: release
     permissions:

@@ -8,6 +8,7 @@ services:
       LIVEMITSCHRIFT_PUBLISHER_KEY_FILE: /run/secrets/publisher_key
       LIVEMITSCHRIFT_TRUSTED_PROXIES: 172.30.81.2
       LIVEMITSCHRIFT_PRIVACY_URL: ${PRIVACY_URL:-}
+      LIVEMITSCHRIFT_SOURCE_URL: ${SOURCE_URL:-}
       LIVEMITSCHRIFT_LOG_LEVEL: ${LOG_LEVEL:-warning}
       # Optional privacy notice: put an HTML fragment at ./config/datenschutz.html.
       LIVEMITSCHRIFT_PRIVACY_FILE: /config/datenschutz.html

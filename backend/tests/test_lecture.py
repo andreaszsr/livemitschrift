@@ -130,6 +130,29 @@ def test_privacy_link_is_configurable_and_escaped(tmp_path, monkeypatch):
             create_app(tmp_path)
 
 
+def test_source_link_points_to_running_version(tmp_path, monkeypatch):
+    upstream = 'https://github.com/andreaszsr/livemitschrift'
+    monkeypatch.delenv('LIVEMITSCHRIFT_SOURCE_URL', raising=False)
+    monkeypatch.delenv('LIVEMITSCHRIFT_SOURCE_REVISION', raising=False)
+    with TestClient(create_app(tmp_path)) as client:
+        context, _ = published(client)
+        context.__exit__(None, None, None)
+        assert f'<a href="{upstream}">Quellcode</a>' in client.get('/').text
+        assert f'name="livemitschrift-source" content="{upstream}"' in client.get(f'/notebook/{IDENTITY}').text
+    monkeypatch.setenv('LIVEMITSCHRIFT_SOURCE_REVISION', 'v0.1.0')
+    with TestClient(create_app(tmp_path)) as client:
+        assert f'content="{upstream}/tree/v0.1.0"' in client.get(f'/notebook/{IDENTITY}').text
+    monkeypatch.setenv('LIVEMITSCHRIFT_SOURCE_URL', 'https://example.org/fork?a=1&b=2')
+    with TestClient(create_app(tmp_path)) as client:
+        assert 'href="https://example.org/fork?a=1&amp;b=2">Quellcode' in client.get('/').text
+    for name, invalid in (('LIVEMITSCHRIFT_SOURCE_URL', 'http://example.org/'), ('LIVEMITSCHRIFT_SOURCE_URL', 'https://example.org/"><script>'),
+                          ('LIVEMITSCHRIFT_SOURCE_URL', 'javascript:alert(1)'), ('LIVEMITSCHRIFT_SOURCE_REVISION', '../evil')):
+        monkeypatch.delenv('LIVEMITSCHRIFT_SOURCE_URL', raising=False)
+        monkeypatch.setenv(name, invalid)
+        with pytest.raises(ValueError):
+            create_app(tmp_path)
+
+
 def test_search_engines_are_kept_away(tmp_path):
     with TestClient(create_app(tmp_path)) as client:
         robots = client.get('/robots.txt')

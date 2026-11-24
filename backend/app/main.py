@@ -106,7 +106,9 @@ def create_app(data_directory: Path | None = None, *, access: PublisherAccess | 
     @app.get('/')
     async def index():
         link = escape(privacy_link(), quote=True)
-        page = landing.replace('__PRIVACY_LINK__', f'<p class="landing-links"><a href="{link}">Datenschutz</a></p>' if link else '')
+        source = escape(config.source_url, quote=True)
+        links = (f'<a href="{link}">Datenschutz</a> · ' if link else '') + f'<a href="{source}">Quellcode</a>'
+        page = landing.replace('__PRIVACY_LINK__', f'<p class="landing-links">{links}</p>')
         return HTMLResponse(page, headers={'Cache-Control': 'no-store'})
 
     @app.get('/notebook/{identity}')
@@ -114,7 +116,7 @@ def create_app(data_directory: Path | None = None, *, access: PublisherAccess | 
         if not re.fullmatch(r'[a-f0-9]{64}', identity) or (await asyncio.to_thread(store.status, identity)) is None:
             raise HTTPException(404, 'Unknown notebook.')
         # The identity is validated hex; it only fills the per-notebook manifest link.
-        page = html.replace('__NOTEBOOK__', identity).replace('__PRIVACY_URL__', escape(privacy_link(), quote=True))
+        page = html.replace('__NOTEBOOK__', identity).replace('__PRIVACY_URL__', escape(privacy_link(), quote=True)).replace('__SOURCE_URL__', escape(config.source_url, quote=True))
         return HTMLResponse(page, headers={'Cache-Control': 'no-store'})
 
     @app.get('/manifest/{identity}.webmanifest')
