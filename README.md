@@ -155,6 +155,21 @@ See [SECURITY.md](SECURITY.md) for how keys, links and withdrawal work.
 - [Privacy notice template](docs/privacy-notice-template.md) (German)
 - [Roadmap](ROADMAP.md) and [Contributing](CONTRIBUTING.md)
 
+## How this project is made
+
+LiveMitschrift is developed by andreaszsr, who sets the requirements, design
+decisions and priorities and tests the app in real lectures. Claude Code
+(Anthropic) writes almost all of the code, and no one reviews it line by line.
+Quality comes from three sources:
+
+- automated tests: unit, integration, native app and 50-reader load tests (see
+  [testing](docs/testing.md));
+- security audits in CI;
+- practical use in teaching.
+
+Please keep this in mind when you evaluate the project, and report problems you
+find.
+
 ## License
 
 [GNU Affero General Public License v3.0 only](LICENSE) (`AGPL-3.0-only`).
