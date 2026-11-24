@@ -166,7 +166,7 @@ impl Database {
                 .read_to_end(&mut bytes)?;
             if bytes.len() > MAX_PDF_BYTES
                 || !bytes.starts_with(b"%PDF-")
-                || format!("{:x}", sha2::Sha256::digest(&bytes)) != asset
+                || crate::pdf_assets::sha256_hex(&bytes) != asset
             {
                 return Err("Damaged backup PDF.".into());
             }
@@ -209,4 +209,3 @@ impl Database {
     }
 }
 
-use sha2::Digest;

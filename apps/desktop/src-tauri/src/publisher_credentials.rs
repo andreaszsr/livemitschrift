@@ -1,6 +1,4 @@
 //! Server credentials stay out of SQLite, portable backups and general preferences.
-#[cfg(feature = "storage-smoke-test")]
-use sha2::{Digest, Sha256};
 
 // Keychain interaction is process-wide. Serialize every credential operation so
 // a background read cannot suppress a concurrent explicit save/load prompt.
@@ -88,8 +86,8 @@ fn test_path(server: &str) -> Result<std::path::PathBuf, String> {
     let directory = std::env::var_os("LIVEMITSCHRIFT_STORAGE_SMOKE_DIR")
         .ok_or("An isolated credential test directory is required.")?;
     Ok(std::path::PathBuf::from(directory).join(format!(
-        "publisher-{:x}.key",
-        Sha256::digest(server.as_bytes())
+        "publisher-{}.key",
+        crate::pdf_assets::sha256_hex(server)
     )))
 }
 #[cfg(feature = "storage-smoke-test")]
