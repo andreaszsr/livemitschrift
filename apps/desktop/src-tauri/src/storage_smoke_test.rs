@@ -8,7 +8,9 @@ pub(super) type TestResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
 pub(super) fn evaluate(webview: &Webview<Wry>, script: &str) -> TestResult<Value> {
     let (sender, receiver) = mpsc::channel();
     webview.eval_with_callback(script, move |result| { let _ = sender.send(result); })?;
-    Ok(serde_json::from_str(&receiver.recv_timeout(Duration::from_secs(5))?)?)
+    // WebKit returns an empty result when the script throws; name the failing step.
+    let result = receiver.recv_timeout(Duration::from_secs(5))?;
+    serde_json::from_str(&result).map_err(|error| format!("{error} in script: {}", script.chars().take(160).collect::<String>()).into())
 }
 
 pub(super) fn wait_for(webview: &Webview<Wry>, condition: &str) -> TestResult<()> {

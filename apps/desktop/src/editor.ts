@@ -771,6 +771,7 @@ class Editor {
         list.className = 'settings-actions';
         for (const action of actions) {
             const node = button(action.label, action.icon, () => { dialog.close(); action.run(); }, action.description);
+            node.dataset.action = action.id;
             node.disabled = action.disabled ?? false;
             node.append(document.createTextNode(action.label));
             list.append(node);

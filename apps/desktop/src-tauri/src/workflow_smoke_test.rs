@@ -35,7 +35,14 @@ fn action(webview:&Webview<Wry>,id:&str)->TestResult<()>{
         if evaluate(webview,"document.getElementById('tools-panel').hidden")?==true {
             click(webview,"#toolbar [data-action=tools]")?;
         }
-        click(webview,&format!("#tools-panel [data-action='{id}']"))
+        let tool=format!("#tools-panel [data-action='{id}']");
+        if evaluate(webview,&format!("!!document.querySelector({})",serde_json::to_string(&tool)?))?==true {
+            return click(webview,&tool);
+        }
+        // Rarely used administration actions live in the settings dialog.
+        if id=="settings" {return Err("Missing settings action".into());}
+        action(webview,"settings")?;
+        click(webview,&format!("#editor-dialog .settings-actions [data-action='{id}']"))
     }
 }
 fn saved(webview:&Webview<Wry>,count:usize)->TestResult<()>{wait_for(webview,&format!("document.getElementById('save-status')?.textContent==='Lokal gespeichert'&&document.getElementById('stroke-count')?.textContent==='{} {}'",count,if count==1{"Strich"}else{"Striche"}))}
@@ -72,7 +79,7 @@ fn reader(webview:&Webview<Wry>,label:&str,url:&str,width:f64)->TestResult<Webvi
     let reader=WebviewWindowBuilder::new(webview.app_handle(),label,WebviewUrl::External(url.parse()?)).title("LiveMitschrift · Workflow-Browser").inner_size(width,800.0).build()?;
     // macOS suspends PDF animation frames when another test window fully covers this one.
     reader.show()?;reader.set_focus()?;
-    wait_for(reader.as_ref(),"document.getElementById('connection')?.textContent==='Live verbunden'")?;pdf(reader.as_ref())?;control_help(reader.as_ref())?;Ok(reader)
+    wait_for(reader.as_ref(),"document.getElementById('connection')?.textContent?.startsWith('Live verbunden')")?;pdf(reader.as_ref())?;control_help(reader.as_ref())?;Ok(reader)
 }
 fn wait_file(path:&Path)->TestResult<()>{let deadline=Instant::now()+Duration::from_secs(20);while Instant::now()<deadline{if path.is_file(){return Ok(());}thread::sleep(Duration::from_millis(50));}Err(format!("Missing signal {}",path.display()).into())}
 fn start_sharing(webview:&Webview<Wry>)->TestResult<String>{
@@ -115,16 +122,16 @@ fn writing_toolbar(webview:&Webview<Wry>)->TestResult<()> {
     action(webview,"pen-presets")?;
     control_help(webview)?;
     click(webview,"[aria-label='Farbe hinzufügen']")?;click(webview,"[aria-label='Strichdicke hinzufügen']")?;
-    wait_for(webview,"document.querySelectorAll('[data-pen-color]').length===5&&document.querySelectorAll('[data-pen-width]').length===4")?;
+    wait_for(webview,"document.querySelectorAll('[data-pen-color^=pen-]').length===5&&document.querySelectorAll('[data-pen-width^=pen-]').length===4")?;
     click(webview,"[aria-label='Farbe 5 entfernen']")?;click(webview,"[aria-label='Strichdicke 4 entfernen']")?;
-    evaluate(webview,"(() => {const c=document.querySelector('[data-pen-color=\"0\"]'),w=document.querySelector('[data-pen-width=\"0\"]');c.value='#123456';c.dispatchEvent(new Event('input'));w.value='2';w.dispatchEvent(new Event('input'));return true;})()")?;
+    evaluate(webview,"(() => {const c=document.querySelector('[data-pen-color=\"pen-0\"]'),w=document.querySelector('[data-pen-width=\"pen-0\"]');c.value='#123456';c.dispatchEvent(new Event('input'));w.value='2';w.dispatchEvent(new Event('input'));return true;})()")?;
     click(webview,".pen-presets-form button[type=submit]")?;
     wait_for(webview,"!document.getElementById('editor-dialog').open&&document.querySelector('#toolbar [data-action=color-0]').style.getPropertyValue('--ink-color')==='#123456'&&document.querySelector('#toolbar [data-action=width-0]').getAttribute('aria-label')==='Strichdicke 2'")?;
     action(webview,"width-0")?;action(webview,"pen")?;
     wait_for(webview,"!document.getElementById('editor-dialog').open&&document.querySelector('#toolbar [data-action=width-0]').getAttribute('aria-pressed')==='true'")?;
     action(webview,"width-1")?;
     action(webview,"pen-presets")?;
-    evaluate(webview,"(() => {const c=document.querySelector('[data-pen-color=\"0\"]');c.value='#ffffff';c.dispatchEvent(new Event('input'));document.getElementById('editor-dialog').close();return true;})()")?;
+    evaluate(webview,"(() => {const c=document.querySelector('[data-pen-color=\"pen-0\"]');c.value='#ffffff';c.dispatchEvent(new Event('input'));document.getElementById('editor-dialog').close();return true;})()")?;
     wait_for(webview,"document.querySelector('#toolbar [data-action=color-0]').style.getPropertyValue('--ink-color')==='#123456'")?;
     action(webview,"customize")?;
     control_help(webview)?;
@@ -141,9 +148,9 @@ fn writing_toolbar(webview:&Webview<Wry>)->TestResult<()> {
     for _ in 0..3 {click(webview,"[aria-label='Farbe hinzufügen']")?;}
     for width in [4.2,8.4,12.35] {
         click(webview,"[aria-label='Strichdicke hinzufügen']")?;
-        evaluate(webview,&format!("(() => {{const w=[...document.querySelectorAll('[data-pen-width]')].at(-1);w.value='{width}';w.dispatchEvent(new Event('input'));return true;}})()"))?;
+        evaluate(webview,&format!("(() => {{const w=[...document.querySelectorAll('[data-pen-width^=pen-]')].at(-1);w.value='{width}';w.dispatchEvent(new Event('input'));return true;}})()"))?;
     }
-    evaluate(webview,"(() => {const c=document.querySelector('[data-pen-color-hex=\"6\"]');c.value='#118899';c.dispatchEvent(new Event('input'));return true;})()")?;
+    evaluate(webview,"(() => {const c=document.querySelector('[data-pen-color-hex=\"pen-6\"]');c.value='#118899';c.dispatchEvent(new Event('input'));return true;})()")?;
     click(webview,".pen-presets-form button[type=submit]")?;
     wait_for(webview,"!document.getElementById('editor-dialog').open&&document.querySelector('#toolbar [data-action=color-6]').style.getPropertyValue('--ink-color')==='#118899'&&document.querySelector('#toolbar [data-action=width-5]').getAttribute('aria-label')==='Strichdicke 12,35'")?;
     println!("TOOLBAR_PASS independent panels without overlap, compact top panel, floating bar avoidance/restoration without moving paper; direct presets, configurable favorites, cancel and pen selection");
@@ -243,7 +250,7 @@ fn live(webview:&Webview<Wry>,directory:&Path)->TestResult<()>{
     action(webview,"eraser")?;draw(webview,400.0,5000.0)?;saved(webview,2)?;
     action(webview,"color-1")?;draw(webview,700.0,5400.0)?;saved(webview,3)?;
     fs::write(directory.join("offline-ink-ready"),"ready")?;wait_file(&directory.join("server-restarted"))?;
-    wait_for(first.as_ref(),"document.getElementById('connection')?.textContent==='Live verbunden'&&document.getElementById('stroke-count')?.textContent==='3 Striche'")?;
+    wait_for(first.as_ref(),"document.getElementById('connection')?.textContent?.startsWith('Live verbunden')&&document.getElementById('stroke-count')?.textContent==='3 Striche'")?;
     painted(first.as_ref(),400.0,5000.0,false)?;painted(first.as_ref(),700.0,5400.0,true)?;
     let late=reader(webview,"workflow-reader-b",&url,780.0)?;
     painted(late.as_ref(),700.0,5400.0,true)?;
@@ -252,10 +259,16 @@ fn live(webview:&Webview<Wry>,directory:&Path)->TestResult<()>{
     if evaluate(webview,"document.getElementById('viewer-link').href")?!=url{return Err("Read link changed after relay restart".into());}
     first.set_focus()?;
     let scroll_before=evaluate(first.as_ref(),"document.getElementById('viewport').scrollTop")?;
+    // The viewer's CSP (connect-src 'self') forbids fetching blob: URLs, so keep the Blob it creates.
+    evaluate(first.as_ref(),"(() => {const create=URL.createObjectURL;URL.createObjectURL=blob=>{window.__studentBlob=blob;return create.call(URL,blob);};return true;})()")?;
     action(first.as_ref(),"export")?;
     wait_for(first.as_ref(),"document.getElementById('export-dialog').open&&!document.getElementById('export-download').hidden")?;
-    evaluate(first.as_ref(),"window.__studentPdf=null;void(async()=>{const r=await fetch(document.getElementById('export-download').href);window.__studentPdf=Array.from(new Uint8Array(await r.arrayBuffer()));})();true")?;
-    wait_for(first.as_ref(),"Array.isArray(window.__studentPdf)&&window.__studentPdf.length>100")?;
+    evaluate(first.as_ref(),"window.__studentPdf=null;void(async()=>{window.__studentPdf=Array.from(new Uint8Array(await window.__studentBlob.arrayBuffer()));})().catch(error=>{window.__studentPdf=String(error);});true")?;
+    wait_for(first.as_ref(),"window.__studentPdf!==null")?;
+    // A failed download leaves its error message instead of the bytes.
+    if evaluate(first.as_ref(),"Array.isArray(window.__studentPdf)&&window.__studentPdf.length>100")?!=true {
+        return Err(format!("Student PDF download failed: {}",evaluate(first.as_ref(),"String(window.__studentPdf).slice(0,300)")?).into());
+    }
     let bytes:Vec<u8>=serde_json::from_value(evaluate(first.as_ref(),"window.__studentPdf")?)?;
     fs::write(directory.join("student-export.pdf"),bytes)?;
     click(first.as_ref(),"#export-close")?;
@@ -286,16 +299,16 @@ fn reopen(webview:&Webview<Wry>,directory:&Path)->TestResult<()>{
 fn library(webview:&Webview<Wry>,directory:&Path)->TestResult<()> {
     local(webview,directory)?;
     action(webview,"export")?;wait_file(&directory.join("export.pdf"))?;
-    wait_for(webview,"!document.querySelector('[data-action=backup]').disabled")?;
+    wait_for(webview,"!document.querySelector('#toolbar [aria-controls=drawer]').disabled")?;
     click(webview,"[aria-label='Notizbücher und Themen']")?;
     click(webview,"#drawer [aria-label='Notizbücher und Themen verwalten']")?;
     click(webview,"[aria-label='Meine Notizen umbenennen']")?;
     evaluate(webview,"document.querySelector('#editor-dialog input').value='Backup lecture';document.querySelector('#editor-dialog form').requestSubmit();true")?;
     wait_for(webview,"document.querySelector('.management-row>span')?.textContent==='Backup lecture'")?;
     evaluate(webview,"document.getElementById('editor-dialog').close();true")?;
-    wait_for(webview,"!document.querySelector('[data-action=backup]').disabled")?;
+    wait_for(webview,"!document.querySelector('#toolbar [aria-controls=drawer]').disabled")?;
     action(webview,"backup")?;wait_file(&directory.join("export.livemitschrift"))?;
-    wait_for(webview,"!document.querySelector('[data-action=backup]').disabled")?;
+    wait_for(webview,"!document.querySelector('#toolbar [aria-controls=drawer]').disabled")?;
     evaluate(webview,&format!("(() => {{const transfer=new DataTransfer();transfer.items.add(new File([new Uint8Array({})],'backup.livemitschrift'));const field=document.getElementById('backup-file');field.files=transfer.files;field.dispatchEvent(new Event('change',{{bubbles:true}}));return true;}})()",serde_json::to_string(&fs::read(directory.join("export.livemitschrift"))?)?))?;
     wait_for(webview,"document.querySelectorAll('#drawer select option').length===2")?;
     saved(webview,1)?;
