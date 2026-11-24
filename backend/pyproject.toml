@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "livemitschrift"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+description = "LiveMitschrift synchronization server and read-only notebook viewer backend"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi==0.162.0",
+    "uvicorn==0.54.0",
+    "websockets==17.3",
+    "python-dotenv==1.2.4",
+    "pypdf==6.21.4",
+]
+
+[project.urls]
+Homepage = "https://github.com/andreaszsr/livemitschrift"
+Source = "https://github.com/andreaszsr/livemitschrift"
+Issues = "https://github.com/andreaszsr/livemitschrift/issues"
+
+[project.optional-dependencies]
+test = ["pytest==9.1.1", "httpx==0.28.1"]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

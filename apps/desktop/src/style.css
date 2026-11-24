@@ -1,0 +1,44 @@
+:root { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #243147; background: #f2f4f7; font-synthesis: none; }
+* { box-sizing: border-box; }
+body { margin: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+.toolbar { display: flex; align-items: center; flex-shrink: 0; gap: 16px; padding: 15px 24px; background: #fff; border-bottom: 1px solid #dfe4ec; }
+.brand { font-size: 25px; font-weight: 750; letter-spacing: -1px; }
+.brand span { color: #397566; }
+.mode { font-size: 12px; color: #64748b; }
+.ready { margin-left: auto; color: #28755e; font-size: 12px; }
+label, select { font: inherit; font-size: 12px; }
+select { background: white; color: inherit; padding: 6px 8px; border: 1px solid #d7dee7; border-radius: 5px; }
+.test-panel { flex-shrink: 0; padding: 18px 24px 12px; background: #fff; border-bottom: 1px solid #dfe4ec; }
+.test-panel summary { cursor: pointer; font-size: 12px; margin-bottom: 8px; }
+h1 { font-size: 19px; margin: 0 0 6px; letter-spacing: -.3px; }
+.test-heading p, #input-note { color: #64748b; font-size: 12px; line-height: 1.5; margin: 0; }
+.diagnostics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 24px; margin: 18px 0 12px; }
+dt { font-size: 10px; color: #64748b; margin-bottom: 5px; }
+dd { margin: 0; font-size: 12px; font-variant-numeric: tabular-nums; }
+.pressure dd { display: flex; align-items: center; gap: 8px; }
+meter { width: 110px; height: 16px; accent-color: #397566; }
+.viewport { flex: 1; min-height: 0; overflow: auto; padding: 26px; overscroll-behavior: contain; }
+.viewport:focus-visible { outline: 2px solid #397566; outline-offset: -2px; }
+.paper { position: relative; width: min(100%, 1000px); margin: 0 auto; background: white; border: 1px solid #dfe4ec; border-radius: 3px; box-shadow: 0 3px 15px #24314708; }
+#pdf-background { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+#page { position: relative; }
+.paper[data-zoom="75"] { width: 900px; }
+.paper[data-zoom="100"] { width: 1200px; }
+.paper[data-zoom="125"] { width: 1500px; }
+.paper[data-zoom="150"] { width: 1800px; }
+canvas { display: block; width: 100%; aspect-ratio: 3 / 4; touch-action: none; cursor: crosshair; }
+footer { display: flex; flex-shrink: 0; justify-content: space-between; gap: 16px; padding: 10px 24px; color: #64748b; font-size: 11px; background: #fff; border-top: 1px solid #dfe4ec; }
+.storage-controls { display: flex; align-items: center; gap: 12px; }
+.sharing { display: flex; flex-shrink: 0; align-items: center; flex-wrap: wrap; gap: 10px; padding: 10px 24px; background: #fff; border-bottom: 1px solid #dfe4ec; font-size: 11px; }
+.sharing input { width: 230px; font: inherit; padding: 6px 8px; border: 1px solid #d7dee7; border-radius: 5px; }
+.sharing a { color: #28755e; }
+.pdf-controls { display: flex; flex-shrink: 0; align-items: center; flex-wrap: wrap; gap: 10px; padding: 8px 24px; background: white; border-bottom: 1px solid #dfe4ec; font-size: 11px; }
+.pdf-controls input { font: inherit; max-width: 260px; }
+#pdf-status[data-state="error"] { color: #a63e35; }
+#share-status[data-state="error"] { color: #a63e35; }
+#save-status[data-state="error"] { color: #a63e35; }
+button { font: inherit; color: inherit; background: white; border: 1px solid #d7dee7; border-radius: 5px; padding: 5px 8px; cursor: pointer; }
+button:disabled { cursor: wait; opacity: .6; }
+[hidden] { display: none !important; }
+.error { position: fixed; bottom: 32px; left: 20px; right: 20px; padding: 14px; background: #fff0ee; color: #a63e35; border: 1px solid #d99; border-radius: 5px; }
+@media (max-height: 640px) { .test-panel { padding-top: 10px; } .diagnostics { margin: 10px 0; gap: 8px 24px; } }

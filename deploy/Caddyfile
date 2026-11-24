@@ -1,0 +1,45 @@
+{
+    email {$ACME_EMAIL}
+    admin off
+    log default {
+        format filter {
+            wrap json
+            fields {
+                request>headers>X-Livemitschrift-Publisher-Key delete
+                request>headers>Authorization delete
+                request>headers>Cookie delete
+                request>headers>Referer delete
+                request>uri delete
+                request>remote_ip ip_mask {
+                    ipv4 24
+                    ipv6 48
+                }
+                request>client_ip ip_mask {
+                    ipv4 24
+                    ipv6 48
+                }
+            }
+        }
+    }
+    servers {
+        strict_sni_host on
+        max_header_size 16KB
+        timeouts {
+            read_header 10s
+            idle 2m
+        }
+    }
+}
+{$DOMAIN} {
+    request_body {
+        max_size 52MB
+    }
+    # Compress viewer modules and JSON; WebSockets are not affected.
+    encode zstd gzip
+    reverse_proxy backend:8000 {
+        transport http {
+            dial_timeout 5s
+            response_header_timeout 30s
+        }
+    }
+}

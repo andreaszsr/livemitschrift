@@ -1,0 +1,32 @@
+[package]
+name = "livemitschrift-desktop"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+description = "LiveMitschrift: offline handwriting for university teaching"
+repository = "https://github.com/andreaszsr/livemitschrift"
+edition = "2021"
+
+[features]
+storage-smoke-test = []
+workflow-smoke-test = ["storage-smoke-test"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+rusqlite = { version = "=0.41.1", features = ["bundled", "backup"] }
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+sha2 = "=0.10.9"
+getrandom = "=0.4.3"
+rfd = "=0.17.2"
+zip = { version = "=6.0.0", default-features = false }
+keyring = { version = "=3.6.3", default-features = false, features = ["apple-native", "windows-native", "sync-secret-service"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "=3.7.0"
+block2 = "=0.6.2"
+objc2 = "=0.6.5"
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSProcessInfo"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSEvent", "NSResponder", "NSView", "NSWindow", "block2", "objc2-core-foundation"] }
