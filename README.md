@@ -16,9 +16,10 @@ or browse on their own, and they need no account or app.
 - **Light server.** One FastAPI process with SQLite in Docker behind Caddy HTTPS.
   It is sized for a lecture hall of about 50 readers.
 
-> **Status:** usable, pre-1.0. There is no signed download or published container
-> image yet; build both from source (see below). The UI is currently **German
-> only**; translations are on the [roadmap](ROADMAP.md).
+> **Status:** usable, pre-1.0. The server is published as a container image;
+> there is no signed macOS download yet, so build the app from source (see
+> below). The UI is currently **German only**; translations are on the
+> [roadmap](ROADMAP.md).
 
 ## Features
 
@@ -87,17 +88,17 @@ automatically, and only ports 80/443 are exposed. You need:
 - a domain name.
 
 ```sh
-git clone https://github.com/andreaszsr/livemitschrift.git livemitschrift-src && cd livemitschrift-src
-docker build -t livemitschrift:0.1.0 .
+git clone --branch v0.1.0 https://github.com/andreaszsr/livemitschrift.git livemitschrift-src && cd livemitschrift-src
 python3 scripts/prepare_deployment.py /opt/livemitschrift
 cd /opt/livemitschrift
-# edit .env: DOMAIN, ACME_EMAIL, LIVEMITSCHRIFT_IMAGE=livemitschrift:0.1.0
+# edit .env: DOMAIN, ACME_EMAIL (LIVEMITSCHRIFT_IMAGE=ghcr.io/andreaszsr/livemitschrift:0.1.0)
+docker compose pull
 docker compose up -d --wait
 ```
 
 The [deployment guide](docs/deployment.md) covers:
 
-- building the image;
+- building the image yourself;
 - lecturer accounts;
 - host hardening;
 - backups and restore;
