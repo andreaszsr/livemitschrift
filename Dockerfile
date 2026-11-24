@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM node:24-bookworm-slim AS viewer
+FROM node:25-bookworm-slim AS viewer
 WORKDIR /source
 COPY package.json package-lock.json ./
 COPY packages/core/package.json packages/core/package.json
