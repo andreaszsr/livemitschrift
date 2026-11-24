@@ -22,7 +22,7 @@ Source = "https://github.com/andreaszsr/livemitschrift"
 Issues = "https://github.com/andreaszsr/livemitschrift/issues"
 
 [project.optional-dependencies]
-test = ["pytest==9.1.1", "httpx==0.28.1"]
+test = ["pytest==9.2.0", "httpx==0.28.1"]
 
 [tool.setuptools.packages.find]
 include = ["app*"]
