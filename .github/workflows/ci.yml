@@ -54,7 +54,9 @@ jobs:
           scanners: vuln
       - run: python scripts/test_container.py --viewers 50 --duration 10 --max-schedule-lag 250
   mac:
-    runs-on: macos-latest
+    # Tests only, so an Intel runner is enough: GitHub's arm64 macOS runners often
+    # fail with capacity errors. Release builds stay on arm64 (release.yml).
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
