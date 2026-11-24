@@ -1,6 +1,5 @@
 //! Notebook metadata and idempotent, transactional page edits over release schema 1.
 use super::*;
-use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
 
 pub const MAX_PAGE_HEIGHT: f64 = 1_000_000_000.0;
@@ -109,7 +108,7 @@ impl Database {
     pub fn edit_page(&mut self, edit: &PageEdit) -> StorageResult<()> {
         if !identity(&edit.id)||!identity(&edit.page_id)||!edit.height.is_finite()||edit.height<=0.0||edit.height>MAX_PAGE_HEIGHT
             ||edit.insert.len()>1000||edit.remove.len()>1000||edit.remove.iter().any(|id|!identity(id)) {return Err("Invalid page edit.".into());}
-        let digest=format!("{:x}",Sha256::digest(serde_json::to_vec(edit)?));
+        let digest=crate::pdf_assets::sha256_hex(serde_json::to_vec(edit)?);
         let transaction=self.connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         if let Some(existing)=transaction.query_row("SELECT digest FROM applied_edits WHERE id=?1",[&edit.id],|row|row.get::<_,String>(0)).optional()?{
             if existing!=digest{return Err("A different edit uses the same identity.".into());}return Ok(());
