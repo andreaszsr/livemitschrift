@@ -1,22 +1,49 @@
+# Version updates arrive weekly as one grouped PR per ecosystem.
+# Security updates are not grouped and arrive as soon as an advisory is published.
 version: 2
 updates:
   - package-ecosystem: npm
     directory: /
     schedule:
       interval: weekly
+      day: monday
+    groups:
+      npm:
+        applies-to: version-updates
+        patterns: ["*"]
   - package-ecosystem: cargo
     directory: /apps/desktop/src-tauri
     schedule:
       interval: weekly
+      day: monday
+    groups:
+      cargo:
+        applies-to: version-updates
+        patterns: ["*"]
   - package-ecosystem: pip
     directory: /backend
     schedule:
       interval: weekly
+      day: monday
+    groups:
+      pip:
+        applies-to: version-updates
+        patterns: ["*"]
   - package-ecosystem: docker
     directory: /
     schedule:
       interval: weekly
+      day: monday
+    groups:
+      docker:
+        applies-to: version-updates
+        patterns: ["*"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+      day: monday
+    groups:
+      github-actions:
+        applies-to: version-updates
+        patterns: ["*"]
