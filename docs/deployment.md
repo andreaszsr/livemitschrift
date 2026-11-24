@@ -237,7 +237,14 @@ Privacy notice: copy `config/datenschutz.example.html` to `config/datenschutz.ht
 serves it at `/datenschutz` and links it from the start page and the viewer menu
 (**Datenschutz**); edits take effect without a restart. Alternatively set
 `PRIVACY_URL` in `.env` to an external HTTPS page, which takes precedence. A
-longer German template is in [privacy-notice-template.md](privacy-notice-template.md). The supported backend entry point also redacts 64-digit
+longer German template is in [privacy-notice-template.md](privacy-notice-template.md).
+
+Source link: AGPL-3.0 section 13 requires offering the source of the running
+version to its users. The start page and the viewer menu link **Quellcode**.
+Release images point to their upstream tag automatically. If you run a modified
+version, set `SOURCE_URL` in `.env` to an HTTPS page with your source code.
+
+The supported backend entry point also redacts 64-digit
 hex capabilities/keys from Uvicorn diagnostics, including WebSocket URL messages
 and exception tracebacks. Do not enable unredacted proxy/debug logging on a public
 service: notebook URLs are read capabilities. See [SECURITY.md](../SECURITY.md).

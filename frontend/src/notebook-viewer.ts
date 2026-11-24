@@ -26,6 +26,9 @@ const pageSize = { ...PAGE_SIZE }, ink = new InkDocument(), paper = element('pap
 const privacyUrl = (() => { const value = document.querySelector<HTMLMetaElement>('meta[name=livemitschrift-privacy]')?.content ?? '';
     // Either the server's own /datenschutz page or an external HTTPS page.
     try { const url = new URL(value, location.href); return value && (url.origin === location.origin || url.protocol === 'https:') ? url.href : null; } catch { return null; } })();
+// Source of the running server version (AGPL-3.0 section 13); always an HTTPS URL.
+const sourceUrl = (() => { const value = document.querySelector<HTMLMetaElement>('meta[name=livemitschrift-source]')?.content ?? '';
+    try { const url = new URL(value); return url.protocol === 'https:' ? url.href : null; } catch { return null; } })();
 const fullscreenAvailable = document.fullscreenEnabled && typeof document.documentElement.requestFullscreen === 'function';
 const toolbar = new Toolbar(element('toolbar'), [...(fullscreenAvailable ? ['fullscreen'] : []), 'export', 'zoom', 'zoom-lock', 'placement'], false, () => { persist(); update(); });
 let exportController: AbortController | null = null, exportUrl: string | null = null;
@@ -152,6 +155,7 @@ function update(): void {
         {id: 'zoom', label: `Zoom und Ansicht · ${zoom.label}`, description: 'Eigene Vergrößerung und Zoom-Sperre einstellen. Der Zoom des Dozenten wird nicht übernommen.', icon: 'zoom', run: zoomOptions},
         {id: 'zoom-lock', label: zoom.locked ? 'Zoom entsperren' : 'Zoom fixieren', description: zoom.locked ? 'Änderungen deiner Vergrößerung wieder erlauben.' : 'Deine Vergrößerung sperren, damit Zwei-Finger-Gesten sie nicht ändern.', icon: zoom.locked ? 'lock' : 'unlock', run: () => zoom.setLocked(!zoom.locked), pressed: zoom.locked},
         ...(privacyUrl ? [{id: 'privacy', label: 'Datenschutz', description: 'Datenschutzhinweise zu dieser Liveansicht in einem neuen Tab öffnen.', icon: 'info', run: () => { window.open(privacyUrl, '_blank', 'noopener,noreferrer'); }}] : []),
+        ...(sourceUrl ? [{id: 'source', label: 'Quellcode', description: 'Den Quellcode dieser Liveansicht (AGPL-3.0) in einem neuen Tab öffnen.', icon: 'link', run: () => { window.open(sourceUrl, '_blank', 'noopener,noreferrer'); }}] : []),
         {id: 'placement', label: toolbar.preferences.floating ? 'Leiste oben andocken' : 'Leiste frei platzieren', description: toolbar.preferences.floating ? 'Navigation fest am oberen Fensterrand andocken.' : 'Navigation lösen und am Griff frei platzieren.', icon: toolbar.preferences.floating ? 'pin' : 'move', run: () => toolbar.toggleDock()},
     ]);
 }

@@ -14,6 +14,9 @@ COPY scripts/copy_pdf_assets.mjs scripts/copy_pdf_assets.mjs
 RUN npm run build --workspace livemitschrift-frontend
 
 FROM python:3.14-slim-bookworm AS runtime
+# Tag or commit the image is built from; the viewer links to that source (AGPL-3.0 section 13).
+ARG LIVEMITSCHRIFT_SOURCE_REVISION=
+ENV LIVEMITSCHRIFT_SOURCE_REVISION=${LIVEMITSCHRIFT_SOURCE_REVISION}
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 LIVEMITSCHRIFT_BIND=0.0.0.0 LIVEMITSCHRIFT_SERVER_DIR=/data PYTHONPATH=/app/backend
 WORKDIR /app
 COPY LICENSE LICENSE

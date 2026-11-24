@@ -29,8 +29,10 @@ and the macOS bundle both include the license file.
 3. Run the [isolated native checks](testing.md#isolated-native-checks-macos) and
    a short [manual pen check](testing.md#pen-input-wacom-or-another-tablet) on
    the final binary.
-4. Tag `vX.Y.Z`. Review the draft GitHub Release, verify the signature and
-   notarization of the download, and then publish the release.
+4. Tag `vX.Y.Z`. With the macOS download enabled, review the draft GitHub
+   Release, verify the signature and notarization of the download, and then
+   publish the release. Without it, create the GitHub Release for the tag
+   yourself (for example with `gh release create`).
 5. Update a test server to the new image and check reading, publishing and
    backup.
 
@@ -46,7 +48,10 @@ and package/Cargo locks consistent as well). Tagging a reviewed release commit s
 
 - GHCR `ghcr.io/<owner>/<repository>:X.Y.Z`, lowercase package path, Linux AMD64
   and ARM64, with SBOM and build provenance. There is no floating `latest` tag.
-- Apple Silicon macOS `.app`/`.dmg`, attached to a **draft** GitHub Release. Review
+  The image's viewer links its source to the release tag (AGPL-3.0 section 13).
+- Apple Silicon macOS `.app`/`.dmg`, attached to a **draft** GitHub Release. This
+  job runs only when the repository variable `MACOS_RELEASE` is `true`; set it
+  after adding the [Apple credentials](#apple-credentials). Review
   the draft and verify the downloaded signature/notarization before publishing it.
   The container job publishes independently after the environment approval; a Mac
   signing failure does not roll back an already published image.
