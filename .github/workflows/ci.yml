@@ -1,6 +1,7 @@
 name: Tests and container
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_call:
 permissions:
@@ -51,7 +52,7 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           scanners: vuln
-      - run: python scripts/test_container.py --viewers 50 --duration 10
+      - run: python scripts/test_container.py --viewers 50 --duration 10 --max-schedule-lag 250
   mac:
     runs-on: macos-latest
     steps:

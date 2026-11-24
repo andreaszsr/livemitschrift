@@ -292,7 +292,7 @@ def resources(samples: list[tuple[float, float, int]]) -> dict:
     return {'cpu_mean_percent_one_core': round((samples[-1][1] - samples[0][1]) / seconds * 100, 2), 'cpu_samples_percent': summary(cpu), 'rss_peak_mib': round(max(r[2] for r in samples) / 1048576, 2), 'sample_period_seconds': .5}
 
 
-async def exercise(base: str, pid: int, mode: str, viewers: int, duration: float, database: Path, pdf_path: Path, *, ssl_context=None, prepare_verification=None) -> dict:
+async def exercise(base: str, pid: int, mode: str, viewers: int, duration: float, database: Path, pdf_path: Path, *, ssl_context=None, prepare_verification=None, max_schedule_p95: float = 100) -> dict:
     m = Measurements(); samples = []; sampler = asyncio.create_task(resource_samples(pid, samples)) if pid > 0 else None
     reader_list: list[Reader] = []; writer_receiver = commit_task = heartbeat = None
     socket = None
@@ -408,7 +408,8 @@ async def exercise(base: str, pid: int, mode: str, viewers: int, duration: float
         assert len(m.live_ms) >= sequence * 8 * sum(reader.follow for reader in reader_list), "Insufficient live samples were delivered."
         assert sequence / writing_seconds >= (1 / STROKE_SECONDS) * .9, 'Load generator did not sustain its target rate.'
         schedule_p95 = summary(m.schedule_lag_ms)['p95']
-        assert schedule_p95 < 100, f'Source scheduling p95={schedule_p95}ms exceeded 100ms; intended contact rate was not sustained.'
+        # Guards the generator itself: a lagging source would make delivery numbers look better than they are.
+        assert schedule_p95 < max_schedule_p95, f'Source scheduling p95={schedule_p95}ms exceeded {max_schedule_p95}ms; intended contact rate was not sustained.'
         queue.put_nowait(None); await commit_task
         await asyncio.gather(*(reader.close() for reader in reader_list))
         return {'scenario': mode, 'passed': True, 'readers': viewers, 'writer_connections': 1, 'peak_readers': m.peak_readers, 'writing_seconds': round(writing_seconds, 2), 'fixture_pages': PAGE_COUNT, 'fixture_ink_points': PAGE_COUNT * SEED_STROKES * SEED_POINTS, 'fixture_json_bytes': fixture_size, 'written_strokes': sequence, 'written_points': sequence * 81, 'scheduled_contact_hz': CONTACT_HZ, 'actual_strokes_per_second': round(sequence / writing_seconds, 2), 'live_delivery_ms': summary(m.live_ms), 'durable_ack_ms': summary(m.commit_ms), 'initial_join_ms': summary(m.join_ms), 'reconnect_ms': summary(m.reconnect_ms), 'source_schedule_lag_ms': summary(m.schedule_lag_ms), 'concurrent_pdf_get_ms': summary(m.pdf_ms), 'pdf_source_bytes': pdf_path.stat().st_size, 'pdf_response_bytes_total': m.pdf_bytes, 'application_received_bytes': m.received_bytes, 'application_sent_bytes': m.sent_bytes, 'application_received_frames': m.received_frames, 'application_sent_frames': m.sent_frames, 'page_loads': m.page_loads, 'validated_page_cache_hits': m.validated_cache_hits, 'unexpected_closures': m.unexpected_closures, 'independent_ink_messages': m.independent_ink_messages, 'commit_queue_peak': m.commit_queue_peak, 'page_change_strokes': [f'load-{math.ceil(sequence / 3)}', f'load-{math.ceil(sequence * 2 / 3)}'], 'events_over_100ms_by_stroke': m.slow_events_by_stroke, 'resources': resources(samples), 'elapsed_seconds': round(time.perf_counter() - started, 2), 'errors': m.errors}

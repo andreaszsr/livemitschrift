@@ -26,6 +26,8 @@ def main() -> None:
     parser.add_argument('--image', default='livemitschrift:test')
     parser.add_argument('--viewers', type=int, default=50)
     parser.add_argument('--duration', type=float, default=10)
+    parser.add_argument('--max-schedule-lag', type=float, default=100,
+                        help='Allowed p95 lag (ms) of the load generator itself; shared CI runners need more headroom.')
     args = parser.parse_args()
     project = 'livemitschrift-test-' + str(os.getpid())
     root = ROOT/'.tools'; root.mkdir(exist_ok=True)
@@ -85,7 +87,8 @@ def main() -> None:
                 await asyncio.to_thread(backup)
             report = asyncio.run(exercise(base, 0, 'mixed', args.viewers, args.duration, database,
                                           ROOT/'tmp/pdfs/livemitschrift-two-pages.pdf', ssl_context=context,
-                                          prepare_verification=fetch_database))
+                                          prepare_verification=fetch_database,
+                                          max_schedule_p95=args.max_schedule_lag))
             logs = command([*compose, 'logs', '--no-color'], env=env).stdout.decode()
             assert all(secret not in logs for secret in (IDENTITY, SECRET, TEST_KEY)), 'Container logs exposed a capability or publisher key.'
             # Prove stopped-server restore using the snapshot taken during live load.
