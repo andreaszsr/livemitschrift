@@ -14,7 +14,7 @@ workflow-smoke-test = ["storage-smoke-test"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-rusqlite = { version = "=0.41.1", features = ["bundled", "backup"] }
+rusqlite = { version = "=0.43.0", features = ["bundled", "backup"] }
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
