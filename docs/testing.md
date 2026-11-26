@@ -99,6 +99,10 @@ Button names are quoted as they appear in the German UI.
 - **Strokes.** Line width follows pressure. Slow strokes, fast strokes and small
   dots are continuous. Ink is aligned with a stationary pen tip, also after
   resizing the window, zooming and scrolling.
+- **Straight lines.** Drawing a stroke and resting the pen turns it into a
+  straight line; its end follows the pen until it is lifted. Short pauses
+  during normal writing do not trigger it. Readers see the line, not the
+  freehand stroke.
 - **Stylus buttons.** The lower stylus button erases temporarily. The eraser end
   erases.
 - **Interruptions.** Lifting the pen outside the page or moving the pointer

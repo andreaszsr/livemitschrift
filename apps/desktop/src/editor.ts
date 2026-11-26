@@ -1,6 +1,7 @@
-import { applyNotebookEvent, createStrokeId, DrawingSession, EditHistory, findPage, hitStroke, clampOffset, lassoSelection, pasteStrokes, strokeBounds, translateStrokes, InkDocument, LaserPointer, MAX_DOCUMENT_HEIGHT, MAX_PDF_BYTES, notebookPages, notebookPdfPlacement, PAGE_SIZE, PenInput, ViewportInkRenderer } from '@livemitschrift/core';
+import { applyNotebookEvent, createStrokeId, DrawingSession, EditHistory, findPage, hitStroke, HoldDetector, pressureWidth, straightLine, clampOffset, lassoSelection, pasteStrokes, strokeBounds, translateStrokes, InkDocument, LaserPointer, MAX_DOCUMENT_HEIGHT, MAX_PDF_BYTES, notebookPages, notebookPdfPlacement, PAGE_SIZE, PenInput, ViewportInkRenderer } from '@livemitschrift/core';
 import type { InputHandlers, InputObservation, NotebookSnapshot, Notebook, NotePage, PageEdit, Point, Stroke, Vector, ViewPosition } from '@livemitschrift/core';
 import { SelectionOverlay } from './selection-overlay.js';
+import { LinePreview } from './line-preview.js';
 import { loadPdfDocument, NotebookPdfRenderer, PageThumbnails } from '@livemitschrift/pdf';
 import { button, escapeHtml, icon, Toolbar, toolbarPreferences, ViewportZoom, zoomControls } from '@livemitschrift/ui';
 import type { ToolbarAction } from '@livemitschrift/ui';
@@ -75,6 +76,11 @@ class Editor {
     private pendingPointer: {x: number; y: number} | null = null;
     private pointerTimer: number | undefined;
     private readonly selectionOverlay: SelectionOverlay;
+    /** Hold-to-straighten: pause detection for the active stroke, and the line replacing it. */
+    private readonly hold = new HoldDetector();
+    private holdTimer: number | undefined;
+    private straight: {start: Point; end: Point} | null = null;
+    private readonly linePreview: LinePreview;
     /** Lasso state: the selected strokes (as on the page), the path being drawn, an active move. */
     private selection: Stroke[] = [];
     private lassoPath: Point[] | null = null;
@@ -110,6 +116,7 @@ class Editor {
         });
         this.laser = new LaserPointer(this.paper, this.pageSize);
         this.selectionOverlay = new SelectionOverlay(this.paper, this.pageSize);
+        this.linePreview = new LinePreview(this.paper, this.pageSize);
         this.pdf = new NotebookPdfRenderer(element<HTMLCanvasElement>('pdf-background'), readPdfAsset, error => { element('pdf-status').textContent = String(error); report(`PDF-Darstellung fehlgeschlagen: ${String(error)}`); });
         this.toolbar = new Toolbar(element('toolbar'), this.writingIds, true,
             preferences => { this.preference('toolbar-writing', JSON.stringify(preferences)); this.updateToolbar(); },
@@ -142,8 +149,11 @@ class Editor {
                     this.lastErase = point;
                     this.erase(point);
                 }
-                else
+                else {
                     this.session.start(point);
+                    this.hold.begin(point, performance.now());
+                    this.scheduleHold();
+                }
             }, points: points => { this.metrics.accept(points, this.renderer.pixelsPerUnit); if (this.laserActive)
                 this.pointer(points.at(-1) ?? null);
             else if (this.move || this.lassoPath)
@@ -151,8 +161,14 @@ class Editor {
             else if (this.drawingTool === 'eraser')
                 for (const point of points)
                     this.erase(point);
-            else
-                this.session.append(points); }, end: () => this.finishGesture(), observe: observation => this.observe(observation), processed: ms => this.metrics.processed(ms), temporaryTool: tool => {this.temporaryEraser = tool === 'eraser'; this.status();} };
+            else if (this.straight) {
+                this.straight.end = {...this.straight.end, x: points.at(-1)!.x, y: points.at(-1)!.y};
+                this.linePreview.move(this.straight.end);
+            }
+            else {
+                this.session.append(points);
+                this.trackHold(points);
+            } }, end: () => this.finishGesture(), observe: observation => this.observe(observation), processed: ms => this.metrics.processed(ms), temporaryTool: tool => {this.temporaryEraser = tool === 'eraser'; this.status();} };
         const mapping = (x: number, y: number, pressure: number) => this.renderer.toPoint(x, y, pressure);
         this.input = nativeInputAvailable() ? new NativePenInput(this.canvas, this.viewport, this.pageSize, handlers, mapping) : new PenInput(this.canvas, this.pageSize, handlers, mapping);
         this.diagnostics = new InputDiagnostics(this.metrics, () => this.input.finish(), this.persistent && nativeInputAvailable(), enabled => this.preference('input-high-rate', String(enabled)), report);
@@ -550,10 +566,58 @@ class Editor {
         this.display(this.notebook.topics.find(topic => topic.id === id)!.pages[0]!);
         this.publisher?.refresh();
     }
-    private finishGesture(): void { if (this.laserActive) { this.laserActive = false; this.pointer(null); } if (this.lassoPath || this.move) this.lassoEnd(); this.session.finish(); if (this.erased.size) {
+    private finishGesture(): void { if (this.laserActive) { this.laserActive = false; this.pointer(null); } if (this.lassoPath || this.move) this.lassoEnd(); this.endHold(); this.session.finish(); if (this.erased.size) {
         this.queue.enqueue(this.history().record(this.current.id, this.current.height, [], [...this.erased.values()]));
         this.erased.clear();
     } this.lastErase = null; this.status(); }
+    // ---- Hold-to-straighten ---------------------------------------------------
+    // The pen input sends no samples while the pen rests, so a timer checks for
+    // the hold; it is restarted whenever the pen leaves the hold radius.
+    private scheduleHold(): void {
+        window.clearTimeout(this.holdTimer);
+        this.holdTimer = window.setTimeout(() => this.checkHold(), this.hold.remaining(performance.now()));
+    }
+    private trackHold(points: Point[]): void {
+        const now = performance.now();
+        let moved = false;
+        for (const point of points) moved = this.hold.move(point, now, this.renderer.pixelsPerUnit) || moved;
+        if (moved) this.scheduleHold();
+    }
+    private checkHold(): void {
+        this.holdTimer = undefined;
+        const end = this.hold.held(performance.now(), this.renderer.pixelsPerUnit);
+        if (end) this.startLine(end);
+    }
+    /**
+     * Replace the freehand stroke by a line preview. The stroke was never
+     * recorded or stored; readers already saw it, so it is ended and removed for
+     * them (the server rejects removing unfinished ink). The line itself is
+     * drawn as a normal stroke on pen-up, so undo, sync and export apply.
+     */
+    private startLine(end: Point): void {
+        const stroke = this.session.discard();
+        this.hold.reset();
+        if (!stroke) return;
+        const [start, stop] = straightLine(stroke.points, end);
+        this.straight = {start, end: stop};
+        this.current.strokes = [...this.ink.strokes.values()];
+        this.renderer.invalidate();
+        this.publisher?.publish({ type: 'ink', pageId: this.current.id, operation: { type: 'stroke_end', stroke_id: stroke.id } });
+        this.publisher?.publish({ type: 'edit', edit: { id: createStrokeId(), pageId: this.current.id, insert: [], remove: [stroke.id], height: this.current.height } });
+        this.linePreview.show(start, stop, stroke.color, stroke.highlighter ? stroke.width : pressureWidth(stroke.width, start.pressure), stroke.highlighter === true);
+    }
+    private endHold(): void {
+        window.clearTimeout(this.holdTimer);
+        this.holdTimer = undefined;
+        this.hold.reset();
+        const line = this.straight;
+        if (!line) return;
+        this.straight = null;
+        this.linePreview.hide();
+        this.session.start(line.start);
+        this.session.append([line.end]);
+        this.session.finish();
+    }
     private erase(point: Point): void {
         const from = this.lastErase ?? point, removed: Stroke[] = [];
         for (const stroke of this.ink.strokes.values())

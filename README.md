@@ -32,6 +32,8 @@ or browse on their own, and they need no account or app.
   mouse fallback and pinch zoom with a zoom lock.
 - **Tools.**
   - Pen and whole-stroke eraser; the lower stylus button erases temporarily.
+  - Straight lines: rest the pen at the end of a stroke, then adjust the end
+    point before lifting the pen.
   - Translucent highlighter with its own colors and widths.
   - Lasso to move, copy, cut, paste and delete strokes.
   - Laser pointer, which readers see too and which is never saved.
