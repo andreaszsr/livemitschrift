@@ -35,6 +35,10 @@ system does not support collaborative editing.
   - Real pen pressure is never inferred from mouse events.
   - The lower stylus button acts as a temporary eraser.
   - Pinch zoom can be locked.
+  - Hold-to-straighten: when the pen rests at the end of a pen or marker stroke,
+    the stroke becomes a straight line whose end follows the pen until pen-up.
+    Readers already saw the freehand ink, so it is ended and removed with an
+    edit; the line is then sent as an ordinary two-point stroke.
 - **Rendering.** Strokes are smoothed when drawn; the stored points stay unchanged.
 - **Storage.** SQLite holds notebooks, topics and pages, including pages that
   grow downward as the lecturer writes.

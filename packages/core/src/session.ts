@@ -30,6 +30,19 @@ export class DrawingSession {
     this.apply({ type: "stroke_points", stroke_id: this.activeStroke, points });
   }
 
+  /**
+   * Drop the active stroke from the local document without a stroke_end
+   * operation, so it is never recorded or stored. Returns the dropped stroke;
+   * the caller tells readers that already saw it.
+   */
+  discard(): Stroke | null {
+    if (this.activeStroke === null) return null;
+    const stroke = this.document.strokes.get(this.activeStroke) ?? null;
+    this.document.strokes.delete(this.activeStroke);
+    this.activeStroke = null;
+    return stroke;
+  }
+
   finish(): void {
     if (this.activeStroke === null) return;
     this.apply({ type: "stroke_end", stroke_id: this.activeStroke });
