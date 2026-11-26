@@ -35,6 +35,8 @@ export const icons: Record<string, string> = {
     laser: '<circle cx="12" cy="12" r="3"/><path d="M12 2v4 M12 18v4 M2 12h4 M18 12h4 M5 5l2.5 2.5 M16.5 16.5 19 19 M5 19l2.5-2.5 M16.5 7.5 19 5"/>',
     fullscreen: '<path d="M4 9V4h5 M20 9V4h-5 M4 15v5h5 M20 15v5h-5"/>',
     qr: '<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3h-3Z M20 14v.01 M14 20h.01 M17 20h4v-3"/>',
+    note: '<path d="M4 4h16v11l-5 5H4Z M15 20v-5h5 M8 9h8 M8 13h4"/>',
+    notes: '<path d="M8 3h12v14 M4 7h12v14H4Z M7 12h6 M7 16h4"/>',
     copy: '<rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h4"/>',
 };
 export function icon(name: string): string { return `<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${icons[name] ?? icons.more}</svg>`; }
@@ -322,3 +324,5 @@ export class Toolbar {
 
 export { ViewportZoom, zoomPreferences, zoomAnchor, zoomScrollDelta, addZoomLockAction, zoomControls } from './zoom.js';
 export type { ZoomPreferences } from './zoom.js';
+export { linkParts, linkedText } from './links.js';
+export type { TextPart } from './links.js';

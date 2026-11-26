@@ -17,11 +17,35 @@ from websockets.sync.client import connect
 from test_support import ROOT, start_server, stop
 
 KEY, SECRET, HEAD = 'd'*64, '7'*64, 'a'*64
+NOTE = 'Privatnotiz-7f3a mit Link https://example.org/skript.'
+
+
+def student_notes(browser, base, identity):
+    """Place a private note, reload, open it again; its text must never reach the network."""
+    browser.evaluate("document.querySelector('#toolbar [data-action=note]').click();true")
+    browser.wait("document.getElementById('paper').dataset.notes==='placing'")
+    browser.evaluate("(() => {const p=document.getElementById('paper').getBoundingClientRect(),s=p.width/1200;"
+                     "document.getElementById('paper').dispatchEvent(new MouseEvent('click',{bubbles:true,clientX:p.left+600*s,clientY:p.top+300*s}));return true;})()")
+    browser.wait("document.getElementById('viewer-dialog').open&&!!document.querySelector('#viewer-dialog textarea')")
+    browser.evaluate(f"(() => {{const d=document.getElementById('viewer-dialog');d.querySelector('textarea').value={json.dumps(NOTE)};d.querySelector('form').requestSubmit();return true;}})()")
+    browser.wait("!document.getElementById('viewer-dialog').open&&document.querySelector('.note-marker')?.textContent==='1'&&document.getElementById('paper').dataset.notes===''")
+    assert browser.evaluate("document.getElementById('notice-text').textContent.includes('nur in diesem Browser')")
+    browser.call('Page.reload')
+    browser.wait("document.getElementById('connection')?.dataset.state==='waiting'&&document.querySelector('.note-marker')?.textContent==='1'")
+    position=browser.evaluate("(() => {const m=document.querySelector('.note-marker');return [parseFloat(m.style.left),parseFloat(m.style.top)];})()")
+    assert abs(position[0]-50)<0.5 and abs(position[1]-300/6400*100)<0.5, position
+    browser.evaluate("document.querySelector('.note-marker').click();true")
+    browser.wait("document.querySelector('#viewer-dialog .note-text a')?.href==='https://example.org/skript'&&document.querySelector('#viewer-dialog .note-text a').rel==='noopener noreferrer'")
+    browser.evaluate("document.getElementById('viewer-dialog').close();true")
+    browser.evaluate("document.getElementById('notice').hidden=true;true")
+    # Nothing that left the browser may contain the note: requests, uploads or WebSocket frames.
+    sent=[json.dumps(event['params']) for event in browser.events if event['method'] in ('Network.requestWillBeSent','Network.webSocketFrameSent')]
+    assert sent and not any('Privatnotiz-7f3a' in item for item in sent), 'A note left the browser.'
 
 
 class Browser:
     def __init__(self, wire):
-        self.wire, self.sequence, self.session = wire, 0, None
+        self.wire, self.sequence, self.session, self.events = wire, 0, None, []
 
     def call(self, method, params=None):
         self.sequence += 1
@@ -31,6 +55,8 @@ class Browser:
         self.wire.send(json.dumps(request))
         while True:
             message = json.loads(self.wire.recv(timeout=15))
+            if 'method' in message:
+                self.events.append(message)
             if message.get('id') == self.sequence:
                 if 'error' in message:
                     raise RuntimeError(message['error'])
@@ -116,6 +142,7 @@ def main():
                     browser.call('Browser.setDownloadBehavior',{'behavior':'allow','downloadPath':str(downloads)})
                     target=browser.call('Target.createTarget',{'url':'about:blank'})['targetId']
                     browser.session=browser.call('Target.attachToTarget',{'targetId':target,'flatten':True})['sessionId']
+                    browser.call('Network.enable')
                     browser.call('Page.navigate',{'url':base+'/notebook/'+identity})
                     browser.wait("document.getElementById('connection')?.dataset.state==='waiting'&&!!document.querySelector('#toolbar [data-action=export]:not(:disabled)')")
                     before=browser.evaluate("({page:document.querySelector('.page-count').textContent,scroll:document.getElementById('viewport').scrollTop,follow:document.getElementById('follow-return').hidden})")
@@ -131,9 +158,11 @@ def main():
                     after=browser.evaluate("({page:document.querySelector('.page-count').textContent,scroll:document.getElementById('viewport').scrollTop,follow:document.getElementById('follow-return').hidden})")
                     assert before==after, 'Export changed navigation/Follow.'
                     assert browser.evaluate("fetch('/api/sync/pdf/'+'a'.repeat(64),{method:'POST',body:'%PDF-'}).then(r=>r.status)")==401
+                    student_notes(browser, base, identity)
+                    assert 'Privatnotiz-7f3a' not in (directory/'server.log').read_text()
                     destination=ROOT/'output/pdf/student-browser-export.pdf'; destination.parent.mkdir(parents=True,exist_ok=True)
                     shutil.copyfile(file,destination)
-                    print('BROWSER_EXPORT_PASS actual four-page Chrome download, both PDF slides and long ink, unchanged navigation/Follow, no writer credentials; instructor disconnected.')
+                    print('BROWSER_EXPORT_PASS actual four-page Chrome download, both PDF slides and long ink, unchanged navigation/Follow, no writer credentials; private note survives reload with a safe link and never reaches the network; instructor disconnected.')
             finally:
                 stop(chrome); stop(server)
 

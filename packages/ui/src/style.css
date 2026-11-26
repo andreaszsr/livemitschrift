@@ -76,3 +76,11 @@ body:has(#toolbar.vertical[data-edge=right]) .tools-panel{right:64px}
 .context-menu{z-index:40}.context-menu>button{width:100%;justify-content:flex-start;text-align:left;font-size:13px}
 button.danger{color:#a33f45}button.primary.danger{background:#f8e3e4;color:#93353b}
 .topic-button.dragging{opacity:.45}.topic-button.drop-before{box-shadow:inset 0 3px 0 var(--accent)}.topic-button.drop-after{box-shadow:inset 0 -3px 0 var(--accent)}
+.notes-layer{position:absolute;inset:0;pointer-events:none;z-index:3}
+.note-marker{position:absolute;transform:translate(-50%,-50%);pointer-events:auto;min-width:26px;height:26px;padding:0 6px;border-radius:13px 13px 13px 2px;background:#ffd84d;border:1px solid #c9a300;color:#4a3b00;font-size:12px;font-weight:600;line-height:24px;box-shadow:0 1px 4px #0003}
+.paper[data-notes=placing]{cursor:crosshair}.paper[data-notes=placing] .note-marker{pointer-events:none}
+.note-text{white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px;color:inherit}
+#viewer-dialog textarea{display:block;width:100%;box-sizing:border-box;font:inherit;font-size:14px;padding:9px;border:1px solid var(--line);border-radius:6px;resize:vertical}
+.notes-list{display:flex;flex-direction:column;gap:6px;max-height:50vh;overflow:auto}
+.notes-entry{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;padding:8px 10px;border:1px solid var(--line);border-radius:6px;font-size:13px}
+.notes-entry small{font-size:11px;color:var(--muted)}.notes-entry span{overflow-wrap:anywhere}

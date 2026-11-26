@@ -6,6 +6,9 @@ import { PagedConnection } from './paged-connection.js';
 import type { ViewerState } from './viewer-state.js';
 import { followScrollTop } from './follow-position.js';
 import {exportFilename, loadExportTopic} from './topic-export.js';
+import { mergeNotes, NoteStore, pageNotes, parseNotes, serializeNotes } from './student-notes.js';
+import type { NoteStorage } from './student-notes.js';
+import { NotesLayer } from './notes-layer.js';
 function element<T extends HTMLElement>(id: string): T { const node = document.getElementById(id); if (!node)
     throw new Error(`Missing element: ${id}`); return node as T; }
 const identity = location.pathname.split('/').at(-1) ?? '', storageKey = `livemitschrift-viewer-${identity}`;
@@ -16,6 +19,7 @@ try {
 catch { /* Storage may be disabled; the viewer still works. */ }
 let notebook: Notebook | null = null, current: NotePage | null = null, position: ViewPosition | null = null, follow = saved.follow !== false, state: ViewerState = 'connecting', ignoreScrollUntil = 0;
 const positions: Record<string, number> = {};
+let notesHintShown = saved.notesHintShown === true;
 if (saved.positions && typeof saved.positions === 'object')
     for (const [id, y] of Object.entries(saved.positions))
         if (typeof y === 'number' && Number.isFinite(y) && y >= 0)
@@ -30,12 +34,16 @@ const privacyUrl = (() => { const value = document.querySelector<HTMLMetaElement
 const sourceUrl = (() => { const value = document.querySelector<HTMLMetaElement>('meta[name=livemitschrift-source]')?.content ?? '';
     try { const url = new URL(value); return url.protocol === 'https:' ? url.href : null; } catch { return null; } })();
 const fullscreenAvailable = document.fullscreenEnabled && typeof document.documentElement.requestFullscreen === 'function';
-const toolbar = new Toolbar(element('toolbar'), [...(fullscreenAvailable ? ['fullscreen'] : []), 'export', 'zoom', 'zoom-lock', 'placement'], false, () => { persist(); update(); });
+const toolbar = new Toolbar(element('toolbar'), [...(fullscreenAvailable ? ['fullscreen'] : []), 'note', 'export', 'zoom', 'zoom-lock', 'placement'], false, () => { persist(); update(); });
 let exportController: AbortController | null = null, exportUrl: string | null = null;
 // Export is offered on existing layouts too, preserving the user's action order.
 if (saved.exportActionAdded !== true && saved.toolbar && typeof saved.toolbar === 'object') {
     const layout = saved.toolbar as {pinned?: unknown};
     if (Array.isArray(layout.pinned) && !layout.pinned.includes('export')) layout.pinned.unshift('export');
+}
+if (saved.notesActionAdded !== true && saved.toolbar && typeof saved.toolbar === 'object') {
+    const layout = saved.toolbar as {pinned?: unknown};
+    if (Array.isArray(layout.pinned) && !layout.pinned.includes('note')) layout.pinned.unshift('note');
 }
 if (saved.fullscreenActionAdded !== true && fullscreenAvailable && saved.toolbar && typeof saved.toolbar === 'object') {
     const layout = saved.toolbar as {pinned?: unknown};
@@ -48,6 +56,23 @@ const renderer = new ViewportInkRenderer(element<HTMLCanvasElement>('page'), pap
 } });
 async function readPdf(asset: string, page = 1): Promise<Uint8Array> { const response = await fetch(`/api/notebook/${identity}/pdf/${asset}/page/${page}`); if (!response.ok)
     throw new Error(`PDF nicht verfügbar (${response.status}).`); return new Uint8Array(await response.arrayBuffer()); }
+// Private notes stay in this browser; see student-notes.ts. Accessing
+// localStorage itself can throw when site data is blocked.
+const noteStorage = ((): NoteStorage | null => { try { return localStorage; } catch { return null; } })();
+const notes = new NoteStore(noteStorage, `livemitschrift-notes-${identity}`);
+const notesLayer = new NotesLayer(paper, notes, {
+    toPoint: (x, y) => renderer.toPoint(x, y, 0),
+    dialog: title => dialog(title),
+    changed: () => {
+        if (!notesHintShown && notes.all.length) {
+            notesHintShown = true; persist();
+            void navigator.storage?.persist?.().catch(() => false);
+            notice('Deine Notizen liegen nur in diesem Browser auf diesem Gerät, nicht auf dem Server. Sichern: Menü → „Meine Notizen“ → „Notizen speichern“.');
+        }
+        update();
+    },
+    error: notice,
+});
 const pdf = new NotebookPdfRenderer(element<HTMLCanvasElement>('pdf-background'), readPdf, error => notice(`PDF konnte nicht dargestellt werden: ${String(error)}`), true);
 const laser = new LaserPointer(paper, pageSize);
 const zoom = new ViewportZoom(paper, viewport, pageSize, {
@@ -62,7 +87,7 @@ const phone = matchMedia('(pointer: coarse) and (max-width: 950px)').matches;
 zoom.configure(phone && saved.phoneZoomDefault !== true ? {value: 'page', locked: false} : saved.zoom);
 toolbar.configure(addZoomLockAction(saved.toolbar, saved.zoom));
 function persist(): void { try {
-    localStorage.setItem(storageKey, JSON.stringify({ toolbar: toolbar.preferences, exportActionAdded: true, fullscreenActionAdded: true, phoneZoomDefault: true, follow, pageId: current?.id ?? saved.pageId, positions, zoom: zoom.preferences }));
+    localStorage.setItem(storageKey, JSON.stringify({ toolbar: toolbar.preferences, exportActionAdded: true, fullscreenActionAdded: true, notesActionAdded: true, notesHintShown, phoneZoomDefault: true, follow, pageId: current?.id ?? saved.pageId, positions, zoom: zoom.preferences }));
 }
 catch { /* Optional per-browser preferences do not gate live viewing. */ } }
 function notice(message: string): void { element('notice-text').textContent = message; element('notice').hidden = false; }
@@ -78,6 +103,7 @@ function display(page: NotePage, y = positions[page.id] ?? 0, subscribe = true):
     viewport.scrollTop = y * paper.getBoundingClientRect().width / page.width;
     renderer.invalidate();
     void pdf.set(page.background).then(() => { element('pdf-status').textContent = page.background ? `${page.background.name} · Folie ${page.background.pageNumber}` : 'Kein PDF-Hintergrund'; }).catch(error => notice(String(error)));
+    notesLayer.render(page);
     update();
     if (!element('drawer').hidden)
         drawer();
@@ -151,6 +177,8 @@ function update(): void {
         {id: 'fullscreen', label: document.fullscreenElement ? 'Vollbild beenden' : 'Vollbild', description: 'Browserleisten ausblenden, damit die Folie den ganzen Bildschirm nutzt.', icon: 'fullscreen', pressed: document.fullscreenElement !== null, disabled: !fullscreenAvailable, run: () => {
             void (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen({navigationUI: 'hide'})).catch(error => notice(`Vollbild nicht möglich: ${String(error)}`));
         }},
+        {id: 'note', label: notesLayer.placing ? 'Notiz setzen beenden' : 'Notiz setzen', description: notesLayer.placing ? 'Notizmodus beenden, ohne eine Notiz zu setzen.' : 'Danach auf die Seite tippen, um dort eine eigene Notiz zu setzen. Sie bleibt nur in diesem Browser.', icon: 'note', pressed: notesLayer.placing, disabled: !current, run: () => notesLayer.setPlacing(!notesLayer.placing)},
+        {id: 'notes', label: `Meine Notizen (${notes.all.length})`, description: 'Alle eigenen Notizen ansehen, sichern oder aus einer Datei laden.', icon: 'notes', disabled: !notebook, run: notesDialog},
         {id: 'export', label: 'Aktuelles Thema als PDF exportieren', description: 'Alle Seiten dieses Themas mit PDF-Hintergründen und gespeicherter Handschrift als PDF herunterladen.', icon: 'download', disabled: !topic || exportController !== null, run: () => {void exportPdf();}},
         {id: 'zoom', label: `Zoom und Ansicht · ${zoom.label}`, description: 'Eigene Vergrößerung und Zoom-Sperre einstellen. Der Zoom des Dozenten wird nicht übernommen.', icon: 'zoom', run: zoomOptions},
         {id: 'zoom-lock', label: zoom.locked ? 'Zoom entsperren' : 'Zoom fixieren', description: zoom.locked ? 'Änderungen deiner Vergrößerung wieder erlauben.' : 'Deine Vergrößerung sperren, damit Zwei-Finger-Gesten sie nicht ändern.', icon: zoom.locked ? 'lock' : 'unlock', run: () => zoom.setLocked(!zoom.locked), pressed: zoom.locked},
@@ -234,6 +262,57 @@ async function exportPdf(): Promise<void> {
         if (exportController === controller) exportController = null;
         update();
     }
+}
+/** All notes of this notebook by topic and page, with backup to and import from a file. */
+function notesDialog(): void {
+    if (!notebook) return;
+    const view = dialog('Meine Notizen'), all = notes.all, list = document.createElement('div');
+    list.className = 'notes-list';
+    const intro = document.createElement('p');
+    intro.textContent = all.length ? 'Nur in diesem Browser gespeichert. Sichere sie als Datei, um sie auf ein anderes Gerät mitzunehmen.' : 'Noch keine Notizen. Mit „Notiz setzen“ auf eine Stelle der Seite tippen.';
+    const entry = (label: string, text: string, open: (() => void) | null): HTMLElement => {
+        const node = document.createElement(open ? 'button' : 'div');
+        node.className = 'notes-entry';
+        const caption = document.createElement('small'), body = document.createElement('span');
+        caption.textContent = label; body.textContent = [...text].slice(0, 140).join('');
+        node.append(caption, body);
+        if (open && node instanceof HTMLButtonElement) { node.type = 'button'; node.title = `${label} öffnen. Eigene Navigation pausiert Follow.`; node.addEventListener('click', open); }
+        return node;
+    };
+    const known = new Set<string>();
+    for (const topic of notebook.topics) for (const [index, page] of topic.pages.entries()) {
+        known.add(page.id);
+        for (const {note, number} of pageNotes(all, page.id))
+            list.append(entry(`${topic.title} · Seite ${index + 1} · Notiz ${number}`, note.text, () => { view.close(); choosePage(page); notesLayer.show(note, number); }));
+    }
+    const orphaned = all.filter(note => !known.has(note.pageId));
+    for (const note of orphaned) list.append(entry('Entfernte Seite', note.text, null));
+    const actions = document.createElement('div'), backup = document.createElement('button'), load = document.createElement('button'), file = document.createElement('input');
+    actions.className = 'dialog-actions';
+    backup.type = 'button'; backup.textContent = 'Notizen speichern'; backup.title = 'Alle Notizen dieses Notizbuchs als Datei herunterladen.'; backup.disabled = !all.length;
+    backup.addEventListener('click', () => {
+        const url = URL.createObjectURL(new Blob([serializeNotes(notes.all, notebook?.title ?? '')], {type: 'application/json'}));
+        const link = document.createElement('a');
+        link.href = url; link.download = exportFilename(`${notebook?.title ?? 'Notizbuch'} – Notizen`).replace(/\.pdf$/, '.json');
+        link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    });
+    file.type = 'file'; file.accept = '.json,application/json'; file.hidden = true;
+    load.type = 'button'; load.textContent = 'Notizen laden'; load.title = 'Notizen aus einer gespeicherten Datei übernehmen; vorhandene bleiben erhalten.';
+    load.addEventListener('click', () => file.click());
+    file.addEventListener('change', () => { void (async () => {
+        const chosen = file.files?.[0];
+        if (!chosen) return;
+        try {
+            if (chosen.size > 4_000_000) throw new Error('Die Datei ist zu groß.');
+            const result = mergeNotes(notes.all, parseNotes(await chosen.text()));
+            notes.replace(result.notes);
+            view.close(); notesLayer.render(current); update();
+            notice(`${result.added} Notizen übernommen, ${result.updated} aktualisiert.`);
+        } catch (error) { notice(`Notizen konnten nicht geladen werden: ${String(error)}`); }
+    })(); });
+    actions.append(load, backup, file);
+    view.append(intro, list, actions);
+    view.showModal();
 }
 function zoomOptions(): void {
     const view = dialog('Ansicht'); view.append(zoomControls(zoom)); view.showModal();
@@ -333,6 +412,8 @@ function receive(message: NotebookSnapshot | NotebookEvent): void {
         sizePaper();
         renderer.redraw();
     }
+    // Markers are placed relative to the page height.
+    if (message.type !== 'ink') notesLayer.render(current);
     if (message.type !== 'ink' || message.operation.type !== 'stroke_points')
         update();
 }

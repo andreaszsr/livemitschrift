@@ -152,3 +152,7 @@ Button names are quoted as they appear in the German UI.
   reconnects.
 - **Topic export.** "Aktuelles Thema als PDF exportieren" contains all pages,
   the PDF backgrounds and the confirmed ink.
+- **Private notes (phone and laptop).** "Notiz setzen", then a tap places a
+  note at that spot; a swipe still changes pages. Markers stay in place when
+  zooming. Notes survive a reload, "Meine Notizen" lists them and saves/loads
+  a file.
