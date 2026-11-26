@@ -63,6 +63,17 @@ fn draw(webview:&Webview<Wry>,x:f64,y:f64)->TestResult<()>{
     wait_for(webview,&format!("(() => {{const p=document.getElementById('paper').getBoundingClientRect(),s=p.width/1200;return document.elementFromPoint(p.left+{x}*s,p.top+{y}*s)===document.getElementById('page');}})()"))?;
     evaluate(webview,&format!("(() => {{const p=document.getElementById('paper').getBoundingClientRect(),s=p.width/1200;const x=p.left+{x}*s,y=p.top+{y}*s;for(const [phase,dx,buttons]of [['down',0,1],['drag',15,1],['up',15,0]])window.dispatchEvent(new CustomEvent('livemitschrift-native-input',{{detail:{{phase,x:x+dx,y,pointerType:'mouse',pressure:0,buttons,button:0,eraser:false}}}}));return true;}})()"))?;Ok(())
 }
+fn pen(webview:&Webview<Wry>,phase:&str,x:f64,y:f64,buttons:u8)->TestResult<()>{
+    evaluate(webview,&format!("(() => {{const p=document.getElementById('paper').getBoundingClientRect(),s=p.width/1200;window.dispatchEvent(new CustomEvent('livemitschrift-native-input',{{detail:{{phase:'{phase}',x:p.left+{x}*s,y:p.top+{y}*s,pointerType:'mouse',pressure:0,buttons:{buttons},button:0,eraser:false}}}}));return true;}})()"))?;Ok(())
+}
+/// Hold-to-straighten: a wavy stroke rests at (500, y), turns into a line preview, then its end follows the pen to (550, y).
+fn straight_line(webview:&Webview<Wry>,y:f64)->TestResult<()>{
+    pen(webview,"down",300.0,y,1)?;
+    for (x,dy) in [(350.0,40.0),(400.0,50.0),(450.0,40.0),(500.0,0.0)]{pen(webview,"drag",x,y+dy,1)?;}
+    wait_for(webview,"document.querySelector('.selection-overlay line')?.closest('svg').style.display===''")?;
+    pen(webview,"drag",550.0,y,1)?;pen(webview,"up",550.0,y,0)?;
+    wait_for(webview,"document.querySelector('.selection-overlay line').closest('svg').style.display==='none'")
+}
 fn scroll(webview:&Webview<Wry>,y:f64)->TestResult<()>{
     evaluate(webview,&format!("(() => {{const p=document.getElementById('paper').getBoundingClientRect();document.getElementById('viewport').scrollTop={y}*p.width/1200;return true;}})()"))?;
     wait_for(webview,&format!("Math.abs(document.getElementById('viewport').scrollTop*1200/document.getElementById('paper').getBoundingClientRect().width-{y})<3"))
@@ -237,6 +248,12 @@ fn live(webview:&Webview<Wry>,directory:&Path)->TestResult<()>{
     evaluate(first.as_ref(),"(() => {const v=document.getElementById('viewport');v.style.flex='';v.style.height='';return true;})()")?;
     followed(webview,first.as_ref())?;
     println!("WORKFLOW_PASS shorter reader stays still during ink and follows instructor scroll in both directions");
+    straight_line(webview,5300.0)?;saved(webview,4)?;
+    wait_for(first.as_ref(),"document.getElementById('stroke-count')?.textContent==='4 Striche'")?;
+    for view in [webview,first.as_ref()]{painted(view,525.0,5300.0,true)?;painted(view,400.0,5350.0,false)?;}
+    action(webview,"undo")?;saved(webview,3)?;
+    wait_for(first.as_ref(),"document.getElementById('stroke-count')?.textContent==='3 Striche'")?;painted(first.as_ref(),525.0,5300.0,false)?;
+    println!("WORKFLOW_PASS hold-to-straighten replaces a wavy stroke by a movable straight line for instructor and reader; undo removes it");
     click(first.as_ref(),"#toolbar [aria-label='Nächste Seite']")?;page(first.as_ref(),2)?;
     wait_for(first.as_ref(),"!document.getElementById('follow-return').hidden&&document.getElementById('stroke-count').textContent==='1 Strich'")?;
     click(webview,"#toolbar [aria-label='Nächste Seite']")?;page(webview,2)?;

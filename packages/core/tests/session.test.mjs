@@ -50,3 +50,23 @@ test("starting a second active stroke fails without replacing the first", () => 
   session.finish();
   assert.equal(document.strokes.get("local-1").points.length, 2);
 });
+
+test("a discarded stroke leaves the document without a stroke_end and allows a new stroke", () => {
+  let sequence = 0;
+  const document = new InkDocument();
+  const operations = [];
+  const session = new DrawingSession(document, (_, operation) => operations.push(operation.type),
+    () => `local-${++sequence}`);
+  assert.equal(session.discard(), null);
+  session.start(point);
+  session.append([{ x: 150, y: 210, pressure: 0.4 }]);
+  const dropped = session.discard();
+  assert.equal(dropped.id, "local-1");
+  assert.equal(dropped.points.length, 2);
+  assert.equal(document.strokes.size, 0);
+  session.finish();
+  session.start(point);
+  session.finish();
+  assert.deepEqual(operations, ["stroke_start", "stroke_points", "stroke_start", "stroke_end"]);
+  assert.equal(document.strokes.get("local-2").complete, true);
+});

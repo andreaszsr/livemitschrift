@@ -12,3 +12,4 @@ export { drawStroke } from "./stroke-rendering.js";
 export * from "./paged.js";
 export * from "./laser.js";
 export * from "./selection.js";
+export * from "./straight-line.js";
