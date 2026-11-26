@@ -29,7 +29,15 @@ export const syncCheckpoint = (notebookId:string):Promise<{sequence:number;head:
 export const outgoingChanges = (notebookId:string,after:number):Promise<{sequence:number;head:string;change:unknown}[]> => invoke('outgoing_changes',{notebookId,after});
 export const acknowledgeChanges = (notebookId:string,sequence:number):Promise<void> => invoke('acknowledge_changes',{notebookId,sequence});
 export const syncTarget = (notebookId:string,server:string,enabled:boolean):Promise<void> => invoke('sync_target',{notebookId,server,enabled});
-export const savePdfExport = (bytes:Uint8Array):Promise<boolean> => invoke('save_pdf_export',bytes);
+export const chooseExportFolder = (current:string|null):Promise<string|null> => invoke('choose_export_folder',{current});
+/** Write a PDF into the export folder; "exists" means nothing was written because `replace` is false. */
+export function exportPdfToFolder(folder:string, name:string, replace:boolean, pdf:Uint8Array):Promise<'saved'|'exists'> {
+    const header = new TextEncoder().encode(JSON.stringify({folder, name, replace}));
+    const body = new Uint8Array(4 + header.length + pdf.length);
+    new DataView(body.buffer).setUint32(0, header.length);
+    body.set(header, 4); body.set(pdf, 4 + header.length);
+    return invoke('export_pdf_to_folder', body);
+}
 export const backupNotebook = (notebookId:string):Promise<boolean> => invoke('backup_notebook',{notebookId});
 export const restoreNotebook = (bytes:Uint8Array):Promise<string> => invoke('restore_notebook',bytes);
 
