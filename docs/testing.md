@@ -105,6 +105,13 @@ Button names are quoted as they appear in the German UI.
   away mid-stroke ends the stroke cleanly.
 - **Offline start.** The app starts and draws with no server and no internet.
 
+### Export
+
+- **PDF export.** The first export asks for a folder (try a Nextcloud folder).
+  The next export of the notebook reuses it, and the range starts after the
+  last exported page and ends at the visible page. Ranges like `2-5,7` export
+  only those pages. An existing file is replaced only after confirmation.
+
 ### Lecture tools
 
 - **PDF import.** Import a 15–50 MB PDF. Import, upload and server rendering

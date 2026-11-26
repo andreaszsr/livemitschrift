@@ -42,7 +42,9 @@ or browse on their own, and they need no account or app.
   turns vertical at the left or right window edge.
 - **Organizing.** Notebooks and topics can be renamed and deleted, also by
   right-click. Topics are reordered by dragging.
-- **Export and backup.** PDF export and portable `.livemitschrift` backups.
+- **Export and backup.** PDF export of a topic into a remembered folder per
+  notebook (for example a Nextcloud folder). The page range defaults to the
+  pages written since the previous export. Portable `.livemitschrift` backups.
 
 ### Sharing
 

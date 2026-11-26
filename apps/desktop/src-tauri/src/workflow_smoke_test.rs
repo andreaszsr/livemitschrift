@@ -298,7 +298,23 @@ fn reopen(webview:&Webview<Wry>,directory:&Path)->TestResult<()>{
 }
 fn library(webview:&Webview<Wry>,directory:&Path)->TestResult<()> {
     local(webview,directory)?;
-    action(webview,"export")?;wait_file(&directory.join("export.pdf"))?;
+    // Export dialog: default name and range, remembered folder, all pages, then replace on a second export.
+    action(webview,"export")?;
+    wait_for(webview,"/^Meine Notizen_.+-\\d{4}-\\d{2}-\\d{2}$/.test(document.querySelector('#editor-dialog [name=export-name]')?.value)&&document.querySelector('#editor-dialog [name=export-range]').value==='1'&&document.querySelector('#editor-dialog [value=range]').checked")?;
+    evaluate(webview,"(() => {const f=document.querySelector('.export-form');f.querySelector('[name=export-name]').value='export';f.querySelector('[name=export-range]').value='9';f.requestSubmit();return true;})()")?;
+    wait_for(webview,"document.querySelector('.export-message').textContent.startsWith('Ungültiger Bereich')")?;
+    evaluate(webview,"(() => {const f=document.querySelector('.export-form');f.querySelector('[value=all]').checked=true;f.requestSubmit();return true;})()")?;
+    wait_file(&directory.join("export.pdf"))?;
+    wait_for(webview,"document.querySelector('.export-message').textContent==='Gespeichert: export.pdf'")?;
+    evaluate(webview,"document.getElementById('editor-dialog').close();true")?;
+    wait_for(webview,"!document.querySelector('#toolbar [aria-controls=drawer]').disabled")?;
+    action(webview,"export")?;
+    wait_for(webview,&format!("document.querySelector('.export-folder span').textContent==={}&&document.querySelector('.export-form p').textContent.includes('zuletzt exportiert bis Seite')",serde_json::to_string(&directory.to_string_lossy())?))?;
+    evaluate(webview,"(() => {const f=document.querySelector('.export-form');f.querySelector('[name=export-name]').value='export.pdf';f.requestSubmit();return true;})()")?;
+    wait_for(webview,"document.querySelector('body>dialog[open] .danger')?.textContent==='Ersetzen'")?;
+    click(webview,"body>dialog[open] .danger")?;
+    wait_for(webview,"document.querySelector('.export-message').textContent==='Gespeichert: export.pdf'")?;
+    evaluate(webview,"document.getElementById('editor-dialog').close();true")?;
     wait_for(webview,"!document.querySelector('#toolbar [aria-controls=drawer]').disabled")?;
     click(webview,"[aria-label='Notizbücher und Themen']")?;
     click(webview,"#drawer [aria-label='Notizbücher und Themen verwalten']")?;

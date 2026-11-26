@@ -1,5 +1,5 @@
 import { applyNotebookEvent, createStrokeId, DrawingSession, EditHistory, findPage, hitStroke, clampOffset, lassoSelection, pasteStrokes, strokeBounds, translateStrokes, InkDocument, LaserPointer, MAX_DOCUMENT_HEIGHT, MAX_PDF_BYTES, notebookPages, notebookPdfPlacement, PAGE_SIZE, PenInput, ViewportInkRenderer } from '@livemitschrift/core';
-import type { InputHandlers, InputObservation, NotebookSnapshot, Notebook, NotePage, PageEdit, Point, Stroke, Vector, ViewPosition } from '@livemitschrift/core';
+import type { InputHandlers, InputObservation, NotebookSnapshot, Notebook, NotePage, PageEdit, Topic, Point, Stroke, Vector, ViewPosition } from '@livemitschrift/core';
 import { SelectionOverlay } from './selection-overlay.js';
 import { loadPdfDocument, NotebookPdfRenderer, PageThumbnails } from '@livemitschrift/pdf';
 import { button, escapeHtml, icon, Toolbar, toolbarPreferences, ViewportZoom, zoomControls } from '@livemitschrift/ui';
@@ -7,9 +7,10 @@ import type { ToolbarAction } from '@livemitschrift/ui';
 import { NativePenInput, nativeInputAvailable } from './native-input.js';
 import { closeApp, desktopStorageAvailable, openLiveViewer, readPdfAsset, storePdfAsset, toggleFullscreen } from './local-store.js';
 import { encode as encodeQr } from 'uqr';
-import { acknowledgeChanges, backupNotebook, createNotebook, createTopic, deleteNotebook, deleteTopic, editPage, forgetPublisherKey, insertBlankPage, loadLibrary, loadNotebook, loadPublisherKey, outgoingChanges, renameItem, reorderItems, restoreNotebook, savePdfExport, savePublisherKey, setPreference, syncCheckpoint, syncStatus, syncTarget } from './notebook-store.js';
+import { acknowledgeChanges, backupNotebook, createNotebook, createTopic, deleteNotebook, deleteTopic, editPage, forgetPublisherKey, insertBlankPage, loadLibrary, loadNotebook, loadPublisherKey, outgoingChanges, renameItem, reorderItems, restoreNotebook, chooseExportFolder, exportPdfToFolder, savePublisherKey, setPreference, syncCheckpoint, syncStatus, syncTarget } from './notebook-store.js';
 import type { Library, NotebookLoad } from './notebook-store.js';
 import { EditQueue } from './edit-queue.js';
+import { defaultExportRange, exportFileName, parsePageRange, validExportFileName } from './export-options.js';
 import { publisherKey, publisherServer, withdrawFromServer } from './publisher-access.js';
 import { DeltaPublisher } from './delta-publisher.js';
 import type { SharingState } from './sharing-state.js';
@@ -458,11 +459,105 @@ class Editor {
     private async requireSaved(): Promise<void> {
         if (!await this.queue.flush()) throw new Error('Bitte zuerst die ausstehenden Änderungen lokal speichern.');
     }
-    private async exportPdf(): Promise<void> {
+    /**
+     * Export dialog for the current topic: a remembered folder per notebook, an
+     * editable file name and a page range that defaults to the pages written
+     * since the previous export of this topic, up to the visible page.
+     */
+    private exportDialog(): void {
+        if (!this.ready || this.busy || this.closing) return;
+        const topic = this.notebook.topics.find(topic => topic.pages.some(page => page.id === this.current.id))!;
+        const pages = topic.pages, current = pages.findIndex(page => page.id === this.current.id) + 1;
+        const folderKey = `export-folder:${this.notebook.id}`, lastKey = `export-last:${topic.id}`;
+        const last = pages.findIndex(page => page.id === this.library.preferences[lastKey]) + 1 || null;
+        let folder = this.library.preferences[folderKey] || null;
+        const dialog = this.dialog('PDF exportieren'), form = document.createElement('form');
+        form.className = 'export-form';
+        const field = (text: string, input: HTMLElement): HTMLLabelElement => { const label = document.createElement('label'); label.textContent = text; label.append(input); return label; };
+
+        const folderRow = document.createElement('div'), folderText = document.createElement('span'), chooseFolder = document.createElement('button');
+        folderRow.className = 'export-folder';
+        chooseFolder.type = 'button'; chooseFolder.textContent = 'Ordner wählen …'; chooseFolder.dataset.action = 'export-folder';
+        chooseFolder.title = 'Ordner für die PDF-Exporte dieses Notizbuchs wählen, z. B. in Nextcloud. Er wird gemerkt.';
+        const showFolder = (): void => { folderText.textContent = folder ?? 'Noch kein Ordner gewählt'; folderText.title = folder ?? ''; };
+        const pickFolder = async (): Promise<boolean> => {
+            const chosen = await chooseExportFolder(folder);
+            if (!chosen) return false;
+            folder = chosen; this.preference(folderKey, chosen); showFolder(); return true;
+        };
+        chooseFolder.addEventListener('click', () => { void pickFolder().catch(error => { message.textContent = String(error); }); });
+        showFolder();
+        folderRow.append(folderText, chooseFolder);
+
+        const name = document.createElement('input');
+        name.name = 'export-name'; name.required = true; name.maxLength = 204;
+        name.value = exportFileName(this.notebook.title, topic.title, new Date());
+        name.title = 'Dateiname ohne „.pdf“. Vorgabe: Notizbuch_Thema-Datum.';
+
+        const scope = document.createElement('fieldset'), legend = document.createElement('legend'), range = document.createElement('input');
+        legend.textContent = 'Seiten';
+        const choice = (value: string, text: string, help: string): HTMLInputElement => {
+            const radio = document.createElement('input'), label = document.createElement('label');
+            radio.type = 'radio'; radio.name = 'export-scope'; radio.value = value; radio.title = help;
+            label.className = 'export-choice'; label.append(radio, document.createTextNode(text));
+            scope.append(label); return radio;
+        };
+        scope.append(legend);
+        const all = choice('all', `Alle Seiten (${pages.length})`, 'Alle Seiten des aktuellen Themas exportieren.'),
+            partial = choice('range', 'Bereich', 'Nur die Seiten im Eingabefeld exportieren.');
+        partial.checked = true;
+        range.name = 'export-range'; range.value = defaultExportRange(last, current);
+        range.title = 'Seiten des Themas, z. B. 2-5,7. Vorgabe: ab der Seite nach dem letzten Export bis zur aktuellen Seite.';
+        range.addEventListener('focus', () => { partial.checked = true; });
+        partial.parentElement!.append(range);
+        const hint = document.createElement('p');
+        hint.textContent = `Aktuelle Seite: ${current} von ${pages.length}` + (last ? ` · zuletzt exportiert bis Seite ${last}` : '');
+        scope.append(hint);
+
+        const message = document.createElement('p'); message.className = 'export-message'; message.setAttribute('role', 'status');
+        const actions = document.createElement('div'), cancel = document.createElement('button'), submit = document.createElement('button');
+        actions.className = 'dialog-actions';
+        cancel.type = 'button'; cancel.textContent = 'Schließen'; cancel.title = 'Export-Dialog schließen.'; cancel.addEventListener('click', () => dialog.close());
+        submit.type = 'submit'; submit.className = 'primary'; submit.textContent = 'Exportieren';
+        submit.title = 'Die gewählten Seiten als PDF in den Exportordner speichern.';
+        actions.append(cancel, submit);
+        form.append(field('Ordner', folderRow), field('Dateiname (.pdf)', name), scope, message, actions);
+
+        form.addEventListener('submit', event => {
+            event.preventDefault();
+            const fileName = validExportFileName(name.value);
+            const selected = all.checked ? pages.map((_, index) => index + 1) : parsePageRange(range.value, pages.length);
+            if (!fileName) { message.textContent = 'Ungültiger Dateiname: keine Zeichen wie / : ? * und nicht mit einem Punkt beginnen.'; return; }
+            if (!selected) { message.textContent = `Ungültiger Bereich. Beispiel: 2-5,7 (Seiten 1 bis ${pages.length}).`; return; }
+            if (this.busy) { message.textContent = 'Bitte kurz warten und erneut versuchen.'; return; }
+            submit.disabled = true;
+            message.textContent = 'PDF wird erstellt …';
+            this.run(async () => {
+                try {
+                    if (!folder && !await pickFolder()) { message.textContent = 'Bitte einen Exportordner wählen.'; return; }
+                    const saved = await this.exportPdf({...topic, pages: selected.map(number => pages[number - 1]!)}, folder!, fileName);
+                    if (!saved) { message.textContent = 'Nicht gespeichert.'; return; }
+                    this.preference(lastKey, pages[selected.at(-1)! - 1]!.id);
+                    message.textContent = `Gespeichert: ${fileName}.pdf`;
+                } catch (error) {
+                    message.textContent = `Export fehlgeschlagen: ${String(error)}`;
+                } finally {
+                    submit.disabled = false;
+                }
+            });
+        });
+        dialog.append(form);
+        dialog.showModal();
+        submit.focus();
+    }
+    /** Returns false if the user declined to replace an existing file. */
+    private async exportPdf(topic: Topic, folder: string, name: string): Promise<boolean> {
         await this.requireSaved();
-        const topic = this.notebook.topics.find(topic=>topic.pages.some(page=>page.id===this.current.id))!;
-        const {exportTopicPdf}=await import('@livemitschrift/pdf/export');
-        await savePdfExport(await exportTopicPdf(topic,readPdfAsset));
+        const {exportTopicPdf} = await import('@livemitschrift/pdf/export');
+        const pdf = await exportTopicPdf(topic, readPdfAsset);
+        if (await exportPdfToFolder(folder, name, false, pdf) === 'saved') return true;
+        if (!await this.confirmDelete('Datei ersetzen?', `„${name}.pdf“ gibt es im Exportordner bereits.`, undefined, 'Ersetzen')) return false;
+        return await exportPdfToFolder(folder, name, true, pdf) === 'saved';
     }
     private manage(): void {
         const dialog=this.dialog('Notizbücher und Themen verwalten');
@@ -758,7 +853,7 @@ class Editor {
             action('share', 'Notizbuch teilen', 'link', () => this.openSharing(), { pressed: this.sharing, disabled: disabled || !this.persistent }),
             action('qr', 'QR-Code für Studierende zeigen', 'qr', () => this.showQr(), { disabled: !this.sharingState.viewerUrl }),
             action('fullscreen', 'Vollbild', 'fullscreen', () => {void toggleFullscreen().catch(report);}, { disabled: !this.persistent }),
-            action('export', 'Aktuelles Thema als PDF exportieren', 'download', () => this.run(() => this.exportPdf()), {disabled:disabled||!this.persistent}),
+            action('export', 'Aktuelles Thema als PDF exportieren', 'download', () => this.exportDialog(), {disabled:disabled||!this.persistent}),
             action('settings', 'Verwaltung und Einstellungen', 'settings', () => this.settingsDialog(settings)),
         ]);
     }
@@ -976,7 +1071,7 @@ class Editor {
         ]);
     }
     /** Built-in confirmation (separate dialog, so an open management dialog stays). */
-    private confirmDelete(title: string, text: string, option?: {label: string; checked: boolean}): Promise<{option: boolean} | null> {
+    private confirmDelete(title: string, text: string, option?: {label: string; checked: boolean}, confirmLabel = 'Endgültig löschen'): Promise<{option: boolean} | null> {
         this.input.finish();
         return new Promise(resolve => {
             const dialog = document.createElement('dialog'), header = document.createElement('header'), heading = document.createElement('h2'), message = document.createElement('p');
@@ -992,7 +1087,7 @@ class Editor {
             }
             const actions = document.createElement('div'); actions.className = 'dialog-actions';
             const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Abbrechen'; cancel.addEventListener('click', () => dialog.close());
-            const confirm = document.createElement('button'); confirm.type = 'button'; confirm.className = 'primary danger'; confirm.textContent = 'Endgültig löschen';
+            const confirm = document.createElement('button'); confirm.type = 'button'; confirm.className = 'primary danger'; confirm.textContent = confirmLabel;
             confirm.addEventListener('click', () => { result = {option: option ? checkbox.checked : false}; dialog.close(); });
             actions.append(cancel, confirm); dialog.append(actions);
             dialog.addEventListener('close', () => { dialog.remove(); resolve(result); }, {once: true});

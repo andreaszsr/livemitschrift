@@ -42,6 +42,9 @@ system does not support collaborative editing.
     copy/cut/paste.
   - Local copies of imported PDFs.
   - PDF export and portable `.livemitschrift` backups.
+  - PDF export writes into a folder the user chose; the folder (per notebook)
+    and the last exported page (per topic) are local preferences. The Rust
+    command accepts only a plain file name and asks before replacing a file.
 - **Failure safety.** A failed save keeps the pending edits. A failed load never
   overwrites stored data. Quitting the app finalizes and flushes the current ink.
 - **Outbox.** Each local edit and its outgoing operation are written in the same
