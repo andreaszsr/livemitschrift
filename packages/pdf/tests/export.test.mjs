@@ -53,3 +53,36 @@ test('pagewise browser assets keep original PDF page numbers separate and embed 
     assert.equal((await PDFDocument.load(result)).getPageCount(),2);
     await mkdir('../../output/pdf',{recursive:true}); await writeFile('../../output/pdf/browser-export.pdf',result);
 });
+
+test('reader notes become PDF text annotations on the right slice, optionally with printable text pages',async()=>{
+    const {PDFName, PDFArray} = await import('pdf-lib');
+    const first=page(), second=page(); second.id='second';
+    first.strokes=[stroke([[100,100,.5],[200,200,.5]])];
+    const text='Ümlaut, Emoji 😀 und\nzweite Zeile';
+    const notes={comments:true, printable:false, byPage:new Map([['page',[
+        {number:1,x:600,y:300,text,updated:Date.UTC(2026,10,26)},
+        {number:2,x:120,y:EXPORT_SLICE_HEIGHT+50,text:'Weiter unten',updated:0}]]])};
+    const comments=async bytes=>{
+        const document=await PDFDocument.load(bytes);
+        return document.getPages().map(target=>{
+            const annots=target.node.lookupMaybe(PDFName.of('Annots'),PDFArray);
+            return annots ? annots.asArray().map(ref=>{const dict=document.context.lookup(ref);
+                return {subtype:dict.get(PDFName.of('Subtype')).toString(),text:dict.lookup(PDFName.of('Contents')).decodeText(),
+                    rect:dict.lookup(PDFName.of('Rect')).asArray().map(n=>n.asNumber())};}) : [];
+        });
+    };
+    const plain=await comments(await exportTopicPdf({id:'t',title:'Notes',pages:[first,second]},async()=>{throw Error('no PDF');},{notes}));
+    // The second note lies below the ink, so it adds a slice; the empty second page stays one page.
+    assert.equal(plain.length,3);
+    assert.deepEqual(plain.map(list=>list.map(item=>item.text)),[[text],['Weiter unten'],[]]);
+    assert.equal(plain[0][0].subtype,'/Text');
+    const [x,,,top]=plain[0][0].rect;
+    assert.ok(Math.abs(x-(24+600*(595.28-48)/1200))<.01 && Math.abs(top-(841.89-24-300*(595.28-48)/1200))<.01);
+    const printed=await PDFDocument.load(await exportTopicPdf({id:'t',title:'Notes',pages:[first,second]},async()=>{throw Error('no PDF');},{notes:{...notes,printable:true}}));
+    assert.equal(printed.getPageCount(),4);
+    // Printable text alone, without comments: text page, no annotations.
+    const printOnly=await comments(await exportTopicPdf({id:'t',title:'Notes',pages:[first,second]},async()=>{throw Error('no PDF');},{notes:{...notes,comments:false,printable:true}}));
+    assert.deepEqual(printOnly,[[],[],[],[]]);
+    const without=await PDFDocument.load(await exportTopicPdf({id:'t',title:'Notes',pages:[first,second]},async()=>{throw Error('no PDF');}));
+    assert.equal(without.getPageCount(),2);
+});

@@ -31,6 +31,9 @@ veröffentlichen und diese als `PRIVACY_URL` in der Server-`.env` eintragen.
   verwendet.
 - Ansichtseinstellungen (Zoom, Follow, Leseposition) speichert nur Ihr Browser
   lokal; sie werden nicht übertragen.
+- Eigene Notizen in der Liveansicht speichert ebenfalls nur Ihr Browser lokal.
+  Sie werden nicht an den Server übertragen; der Betreiber kann sie nicht
+  einsehen. Sie gehen verloren, wenn Sie die Websitedaten löschen.
 
 **Hosting:** […Anbieter, z. B. Hetzner Online GmbH, Rechenzentrum in Deutschland…],
 auf Grundlage eines Vertrags zur Auftragsverarbeitung.

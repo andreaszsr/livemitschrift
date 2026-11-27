@@ -80,6 +80,13 @@ system does not support collaborative editing.
 7. Readers can export the selected topic as a vector PDF.
    - The export loads complete confirmed pages one after another.
    - It does not change the reader's live subscription.
+8. Readers can pin private text notes to a page position (document
+   coordinates). Notes live only in the browser's `localStorage`, keyed by the
+   notebook link, and in files the reader saves; the notes code never uses the
+   network. Notes on pages the lecturer deleted are kept and listed separately.
+   The reader's PDF export can add them as standard PDF Text annotations
+   (UTF-16 contents) on the A4 slice of their position and, independently,
+   as footnote-style numbers plus a printable text page per notebook page.
 
 ### Server
 

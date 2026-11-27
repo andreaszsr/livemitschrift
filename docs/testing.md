@@ -47,8 +47,9 @@ npm run tauri --workspace @livemitschrift/desktop -- build --features workflow-s
 .venv/bin/python scripts/test_browser_export.py     # browser topic export (headless Chrome)
 ```
 
-The library check writes `output/pdf/native-topic-export.pdf`. Look at the
-rendered pages yourself to confirm the result.
+The library check writes `output/pdf/native-topic-export.pdf`, the browser
+export check `output/pdf/student-notes-export.pdf` (with a note comment). Look
+at the rendered pages yourself to confirm the result.
 
 Afterwards, rebuild normally with `npm run desktop:build`. Normal builds reject
 test-data overrides before they open a database. Do not run Vite or npm builds in
@@ -152,3 +153,10 @@ Button names are quoted as they appear in the German UI.
   reconnects.
 - **Topic export.** "Aktuelles Thema als PDF exportieren" contains all pages,
   the PDF backgrounds and the confirmed ink.
+- **Private notes (phone and laptop).** "Notiz setzen", then a tap places a
+  note at that spot; a swipe still changes pages. Markers stay in place when
+  zooming. Notes survive a reload; "Meine Notizen" (next to "Notiz setzen")
+  lists them, deletes after a second tap and saves/loads a file. The topic export offers them as PDF comments; open the PDF in
+  Preview and on an iPad and check position and text (also umlauts and emoji).
+  With "Ergänze meine Notizen als Text zum Drucken", footnote-style numbers and
+  text pages appear, also with comments switched off.
