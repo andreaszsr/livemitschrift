@@ -402,6 +402,14 @@ fn library(webview:&Webview<Wry>,directory:&Path)->TestResult<()> {
     click(webview,"#toolbar [aria-controls=drawer]")?;
     // Navigate to the copied PDF topic; its background must resolve locally.
     click(webview,"#drawer .topic-button:last-child")?;saved(webview,2)?;pdf(webview)?;
+    // A topic reopens on its last viewed page, not on page 1.
+    click(webview,"#toolbar [aria-label='Nächste Seite']")?;page(webview,2)?;
+    click(webview,"#toolbar [aria-controls=drawer]")?;wait_for(webview,"!document.getElementById('drawer').hidden&&document.querySelectorAll('#drawer .topic-button').length===2")?;
+    click(webview,"#drawer .topic-button")?;
+    wait_for(webview,"document.querySelector('.page-count')?.textContent==='1 / 1'")?;
+    click(webview,"#toolbar [aria-controls=drawer]")?;wait_for(webview,"!document.getElementById('drawer').hidden")?;
+    click(webview,"#drawer .topic-button:last-child")?;page(webview,2)?;
+    click(webview,"#toolbar [aria-label='Vorherige Seite']")?;page(webview,1)?;saved(webview,2)?;pdf(webview)?;
     let url=start_sharing(webview)?;fs::write(directory.join("read-url"),&url)?;
     wait_for(webview,"document.getElementById('share-status').textContent==='Live · Serverstand bestätigt'")?;
     let reader=reader(webview,"library-reader",&url,900.0)?;

@@ -5,5 +5,5 @@
     "rootDir": "src",
     "outDir": ".test-build"
   },
-  "include": ["src/native-input.ts", "src/edit-queue.ts", "src/delta-publisher.ts", "src/input-metrics.ts", "src/pen-presets.ts", "src/export-options.ts", "src/page-grid.ts"]
+  "include": ["src/native-input.ts", "src/edit-queue.ts", "src/delta-publisher.ts", "src/input-metrics.ts", "src/pen-presets.ts", "src/export-options.ts", "src/page-grid.ts", "src/last-pages.ts"]
 }

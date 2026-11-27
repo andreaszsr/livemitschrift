@@ -150,7 +150,8 @@ Plain HTTP is accepted only on loopback. Remote servers require HTTPS.
   width favorites.
   Keyboard shortcuts: P pen, E eraser, H highlighter, S lasso, L laser,
   F fullscreen.
-- **Notebooks.** The drawer button opens notebooks and topics.
+- **Notebooks.** The drawer button opens notebooks and topics. The app reopens
+  where you left off; notebooks and topics continue on the page viewed last.
 - **Lecture tools.** The panel button opens PDF import, new topic, zoom, sharing,
   QR code and export.
 - **Settings.** "Einstellungen …" holds backups, notebook management, colors and
