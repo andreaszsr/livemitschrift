@@ -16,7 +16,9 @@ def main() -> None:
     versions = [json.loads((ROOT/'package.json').read_text())['version'],
                 json.loads((ROOT/'apps/desktop/src-tauri/tauri.conf.json').read_text())['version'],
                 tomllib.loads((ROOT/'apps/desktop/src-tauri/Cargo.toml').read_text())['package']['version'],
-                tomllib.loads((ROOT/'backend/pyproject.toml').read_text())['project']['version']]
+                tomllib.loads((ROOT/'backend/pyproject.toml').read_text())['project']['version'],
+                # The FastAPI app declares its own version string.
+                (re.search(r"FastAPI\(title='LiveMitschrift', version='([^']+)'", (ROOT/'backend/app/main.py').read_text()) or [None, None])[1]]
     if len(set(versions)) != 1 or not re.fullmatch(r'\d+\.\d+\.\d+', versions[0]):
         raise SystemExit('Release versions do not match.')
     tag = os.environ.get('GITHUB_REF_NAME')

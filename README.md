@@ -103,10 +103,10 @@ automatically, and only ports 80/443 are exposed. You need:
 - a domain name.
 
 ```sh
-git clone --branch v0.1.0 https://github.com/andreaszsr/livemitschrift.git livemitschrift-src && cd livemitschrift-src
+git clone --branch v0.2.0 https://github.com/andreaszsr/livemitschrift.git livemitschrift-src && cd livemitschrift-src
 python3 scripts/prepare_deployment.py /opt/livemitschrift
 cd /opt/livemitschrift
-# edit .env: DOMAIN, ACME_EMAIL (LIVEMITSCHRIFT_IMAGE=ghcr.io/andreaszsr/livemitschrift:0.1.0)
+# edit .env: DOMAIN, ACME_EMAIL (LIVEMITSCHRIFT_IMAGE=ghcr.io/andreaszsr/livemitschrift:0.2.0)
 docker compose pull
 docker compose up -d --wait
 ```

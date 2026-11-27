@@ -45,7 +45,7 @@ def create_app(data_directory: Path | None = None, *, access: PublisherAccess | 
                 stale.unlink(missing_ok=True)
             yield
 
-    app = FastAPI(title='LiveMitschrift', version='0.1.0', docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+    app = FastAPI(title='LiveMitschrift', version='0.2.0', docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 
     @app.middleware('http')
     async def protect_writes(request: Request, call_next):
