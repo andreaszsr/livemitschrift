@@ -14,6 +14,10 @@ COPY scripts/copy_pdf_assets.mjs scripts/copy_pdf_assets.mjs
 RUN npm run build --workspace livemitschrift-frontend
 
 FROM python:3.14-slim-bookworm AS runtime
+# Debian security fixes often land before the official image is rebuilt.
+RUN apt-get update \
+    && apt-get upgrade --yes --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
 # Tag or commit the image is built from; the viewer links to that source (AGPL-3.0 section 13).
 ARG LIVEMITSCHRIFT_SOURCE_REVISION=
 ENV LIVEMITSCHRIFT_SOURCE_REVISION=${LIVEMITSCHRIFT_SOURCE_REVISION}
