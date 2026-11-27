@@ -40,6 +40,10 @@ system does not support collaborative editing.
     Readers already saw the freehand ink, so it is ended and removed with an
     edit; the line is then sent as an ordinary two-point stroke.
 - **Rendering.** Strokes are smoothed when drawn; the stored points stay unchanged.
+  - Page grid: a CSS background layer below the PDF and ink canvases, sized in
+    container query units of the paper, so it zooms without redrawing. Grid
+    settings (notebook default, topic and page overrides) are local
+    preferences: never synchronized, published, backed up or exported.
 - **Storage.** SQLite holds notebooks, topics and pages, including pages that
   grow downward as the lecturer writes.
   - Supported operations: whole-stroke erasing, undo/redo, lasso move,

@@ -333,6 +333,20 @@ fn library(webview:&Webview<Wry>,directory:&Path)->TestResult<()> {
     wait_for(webview,"document.querySelector('.export-message').textContent==='Gespeichert: export.pdf'")?;
     evaluate(webview,"document.getElementById('editor-dialog').close();true")?;
     wait_for(webview,"!document.querySelector('#toolbar [aria-controls=drawer]').disabled")?;
+    // Grid: a 5 mm notebook default scales with the paper; the page can switch it off and inherit again.
+    action(webview,"grid")?;
+    wait_for(webview,"document.querySelectorAll('#editor-dialog .grid-fields').length===3&&document.querySelector('.page-grid').hidden")?;
+    let choose=|scope:usize,value:&str|evaluate(webview,&format!("(() => {{const s=document.querySelectorAll('#editor-dialog .grid-fields')[{scope}].querySelector('select');s.value='{value}';s.dispatchEvent(new Event('change'));return true;}})()"));
+    choose(0,"squares")?;
+    // The grid cell must resolve against the paper width: measure the same calc() on a probe element.
+    wait_for(webview,"(() => {const g=document.querySelector('.page-grid'),paper=document.getElementById('paper'),size=g.style.backgroundSize.split(' calc')[0],probe=document.createElement('div');probe.style.cssText=`position:absolute;width:${size}`;paper.append(probe);const cell=probe.getBoundingClientRect().width;probe.remove();return !g.hidden&&size.includes('cqw')&&Math.abs(cell-paper.clientWidth*5/210)<0.5;})()")?;
+    choose(2,"none")?;
+    wait_for(webview,"document.querySelector('.page-grid').hidden")?;
+    choose(2,"inherit")?;
+    wait_for(webview,"!document.querySelector('.page-grid').hidden")?;
+    choose(0,"none")?;
+    wait_for(webview,"document.querySelector('.page-grid').hidden")?;
+    evaluate(webview,"document.getElementById('editor-dialog').close();true")?;
     click(webview,"[aria-label='Notizbücher und Themen']")?;
     click(webview,"#drawer [aria-label='Notizbücher und Themen verwalten']")?;
     click(webview,"[aria-label='Meine Notizen umbenennen']")?;

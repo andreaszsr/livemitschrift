@@ -42,11 +42,3 @@ button:disabled { cursor: wait; opacity: .6; }
 [hidden] { display: none !important; }
 .error { position: fixed; bottom: 32px; left: 20px; right: 20px; padding: 14px; background: #fff0ee; color: #a63e35; border: 1px solid #d99; border-radius: 5px; }
 @media (max-height: 640px) { .test-panel { padding-top: 10px; } .diagnostics { margin: 10px 0; gap: 8px 24px; } }
-.export-folder { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
-.export-folder span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
-.export-form fieldset { margin: 12px 0; padding: 8px 10px; border: 1px solid #d7dee7; border-radius: 6px; }
-.export-form legend { font-size: 12px; padding: 0 4px; }
-label.export-choice { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
-label.export-choice input[type=radio] { width: auto; margin: 0; }
-label.export-choice input[name=export-range] { flex: 1; margin: 0; }
-.export-message:empty { display: none; }

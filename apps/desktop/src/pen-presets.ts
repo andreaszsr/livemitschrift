@@ -41,10 +41,10 @@ export function penPreferences(value: unknown): PenPreferences {
 }
 
 export function writingActionIds(pen: PenPreferences): string[] {
-    // Lecture essentials first: marker, laser pointer and "blank page after".
+    // Lecture essentials first: marker, laser pointer, "blank page after" and the grid.
     // Color slots are shared: pen colors normally, marker colors while marking.
     const slots = Math.max(pen.colors.length, pen.markerColors.length), sizes = Math.max(pen.widths.length, pen.markerWidths.length);
-    return ['undo', 'redo', 'pen', 'eraser', 'highlighter', 'lasso', 'laser', 'blank-page', ...Array.from({length: sizes}, (_, index) => `width-${index}`),
+    return ['undo', 'redo', 'pen', 'eraser', 'highlighter', 'lasso', 'laser', 'blank-page', 'grid', ...Array.from({length: sizes}, (_, index) => `width-${index}`),
         ...Array.from({length: slots}, (_, index) => `color-${index}`)];
 }
 

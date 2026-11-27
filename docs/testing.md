@@ -140,6 +140,9 @@ Button names are quoted as they appear in the German UI.
   dialog and by right-click. Dragging a topic reorders it.
 - **Sharing.** "Link kopieren" works. The QR code can be scanned from the back of
   a lecture hall.
+- **Page grid.** A new notebook asks for its grid, preset with the last choice.
+  "Raster" changes notebook, topic and page; the grid lies behind PDF slides and
+  ink, zooms with the page and is absent from the reader view and PDF export.
 
 ### Browser viewer
 

@@ -20,6 +20,9 @@ import { InputDiagnostics } from './input-diagnostics.js';
 import { penPreferences, updatedWritingPins, writingActionIds } from './pen-presets.js';
 import type { PenPreferences } from './pen-presets.js';
 import { penPresetsForm } from './pen-presets-dialog.js';
+import { effectiveGrid, gridBackground, gridPreferenceKey, LAST_GRID_KEY, parseGrid, parseNotebookGrid, serializeNotebookGrid } from './page-grid.js';
+import type { NotebookGrid } from './page-grid.js';
+import { gridFields } from './grid-dialog.js';
 import '@livemitschrift/ui/style.css';
 function element<T extends HTMLElement>(id: string): T { const node = document.getElementById(id); if (!node)
     throw new Error(`Missing element: ${id}`); return node as T; }
@@ -42,6 +45,8 @@ class Editor {
     private readonly ink = new InkDocument();
     private readonly viewport = element('viewport');
     private readonly paper = element('paper');
+    /** Lecturer-only grid, the bottom layer of the paper below PDF and ink. */
+    private readonly gridLayer = document.createElement('div');
     private readonly canvas = element<HTMLCanvasElement>('page');
     private readonly renderer: ViewportInkRenderer;
     private readonly pdf: NotebookPdfRenderer;
@@ -108,6 +113,9 @@ class Editor {
     private maximum = -Infinity;
     constructor() {
         this.queue = new EditQueue(async edit => {if (this.persistent) await editPage(edit); this.publisher?.changed();}, () => this.status());
+        this.gridLayer.className = 'page-grid';
+        this.gridLayer.hidden = true;
+        this.paper.prepend(this.gridLayer);
         this.renderer = new ViewportInkRenderer(this.canvas, this.paper, this.viewport, this.ink, this.pageSize, y => this.viewChanged(y));
         this.zoom = new ViewportZoom(this.paper, this.viewport, this.pageSize, {
             native: nativeInputAvailable(), enabled: () => this.ready && !this.busy && !this.closing,
@@ -407,7 +415,13 @@ class Editor {
             this.writingIds.splice(0, this.writingIds.length, ...writingActionIds(this.pen));
             const previousLayout = toolbarPreferences(parse(this.library.preferences['toolbar-editor']), this.writingIds, true);
             const toolbarPreference = parse(this.library.preferences['toolbar-writing']) ?? {...previousLayout, pinned: [...this.writingIds]};
+            // The grid joined the writing bar later: show it once on existing layouts, after "blank page".
+            if (this.library.preferences['toolbar-grid-added'] !== 'true' && toolbarPreference && typeof toolbarPreference === 'object' && Array.isArray((toolbarPreference as {pinned?: unknown}).pinned)) {
+                const pinned = (toolbarPreference as {pinned: unknown[]}).pinned;
+                if (!pinned.includes('grid')) pinned.splice(pinned.includes('blank-page') ? pinned.indexOf('blank-page') + 1 : pinned.length, 0, 'grid');
+            }
             this.toolbar.configure(toolbarPreference);
+            this.preference('toolbar-grid-added', 'true');
             this.preference('toolbar-writing', JSON.stringify(this.toolbar.preferences));
             this.zoom.configure(parse(this.library.preferences['zoom-editor']));
             this.preference('zoom-editor', JSON.stringify(this.zoom.preferences));
@@ -615,6 +629,7 @@ class Editor {
         this.ink.replace({ type: 'snapshot', page: this.pageSize, strokes: page.strokes });
         page.strokes = [...this.ink.strokes.values()];
         this.sizePaper();
+        this.applyGrid();
         this.viewport.scrollTop = (this.positions[page.id] ?? 0) * this.paper.getBoundingClientRect().width / page.width;
         this.renderer.invalidate();
         this.updateToolbar();
@@ -866,6 +881,7 @@ class Editor {
             blank: 'Ein neues Thema mit einer leeren Schreibseite im aktuellen Notizbuch anlegen.',
             'blank-page': 'Direkt nach der aktuellen Seite eine leere Schreibseite einfügen.',
             zoom: 'Vergrößerung, Anpassung an die Fensterbreite und Zoom-Sperre einstellen.',
+            grid: 'Karo-, Linien- oder Punktraster für Notizbuch, Thema oder Seite einstellen. Nur für Sie sichtbar, nicht für Studierende und nicht im PDF-Export.',
             'zoom-lock': this.zoom.locked ? 'Änderungen der Vergrößerung wieder erlauben.' : 'Aktuelle Vergrößerung sperren, damit Zwei-Finger-Gesten sie nicht versehentlich ändern.',
             share: 'Serververbindung einrichten und das gesamte Notizbuch über einen schreibgeschützten Browserlink teilen.',
             export: 'Das aktuelle Thema mit PDF-Hintergründen und Handschrift als PDF speichern.',
@@ -888,6 +904,7 @@ class Editor {
             action('lasso', 'Lasso', 'lasso', () => this.selectTool('lasso'), {pressed: this.drawingTool === 'lasso'}),
             action('laser', 'Laserpointer', 'laser', () => this.selectTool('laser'), {pressed: this.drawingTool === 'laser'}),
             this.blankPageAction(action),
+            action('grid', 'Raster', 'grid', () => this.gridDialog()),
             // While marking, the shared width/color slots show the marker presets.
             ...(marking ? this.pen.markerWidths.map((width, index) => action(`width-${index}`, `Markerdicke ${width.toLocaleString('de-DE')}`, 'marker',
                 () => this.chooseMarker(this.pen.markerColor, width), {description: `Mit Markerdicke ${width.toLocaleString('de-DE')} weiter markieren.`, strokeWidth: width, pressed: this.pen.markerWidth === width}))
@@ -1035,8 +1052,7 @@ class Editor {
         select.addEventListener('contextmenu', event => this.notebookMenu(event, this.notebook.id));
         header.addEventListener('contextmenu', event => this.notebookMenu(event, this.notebook.id));
         drawer.append(select);
-        const create = button('Neues Notizbuch', 'plus', () => this.askTitle('Notizbuch erstellen', 'Neue Veranstaltung', name => this.run(async () => { if (!await this.queue.flush())
-            throw new Error('Bitte zuerst speichern.'); const id = await createNotebook(name); this.library = await loadLibrary(); await this.selectNotebook(id); })));
+        const create = button('Neues Notizbuch', 'plus', () => this.createNotebookDialog());
         create.disabled = !this.persistent || this.busy;
         const manage=button('Notizbücher und Themen verwalten','settings',()=>this.manage());manage.disabled=!this.persistent||this.busy;
         const operations=document.createElement('div');operations.className='drawer-operations';operations.append(create,manage);
@@ -1129,7 +1145,7 @@ class Editor {
         if (!book) return;
         this.contextMenu(event, [
             {label: 'Umbenennen …', icon: 'pen', run: () => this.askTitle('Notizbuch umbenennen', book.title, name => this.run(async () => { await this.requireSaved(); await renameItem(book.id, book.id, name); await this.reloadMetadata(); }), 'Speichern')},
-            {label: 'Neues Notizbuch …', icon: 'plus', run: () => this.askTitle('Notizbuch erstellen', 'Neue Veranstaltung', name => this.run(async () => { await this.requireSaved(); const created = await createNotebook(name); this.library = await loadLibrary(); await this.selectNotebook(created); }))},
+            {label: 'Neues Notizbuch …', icon: 'plus', run: () => this.createNotebookDialog()},
             {label: 'Verwalten …', icon: 'settings', run: () => this.manage()},
             {label: 'Löschen …', icon: 'trash', danger: true, disabled: this.library.notebooks.length <= 1, run: () => this.deleteNotebookFlow(book.id)},
         ]);
@@ -1208,7 +1224,63 @@ class Editor {
         });
     }
     private dialog(title: string): HTMLDialogElement { this.input.finish(); const dialog = element<HTMLDialogElement>('editor-dialog'); dialog.replaceChildren(); const header = document.createElement('header'), heading = document.createElement('h2'); heading.textContent = title; header.append(heading, button('Schließen', 'close', () => dialog.close())); dialog.append(header); return dialog; }
-    private askTitle(title: string, initial: string, accept: (title: string) => void, confirmation = 'Erstellen'): void {
+    /** New notebook: title and its default grid, preset with the grid chosen last. */
+    private createNotebookDialog(): void {
+        let grid = parseGrid(this.library.preferences[LAST_GRID_KEY]);
+        const fields = gridFields('Raster (nur für Sie sichtbar)', grid, null, next => { if (next) grid = next; });
+        this.askTitle('Notizbuch erstellen', 'Neue Veranstaltung', name => this.run(async () => {
+            await this.requireSaved();
+            const id = await createNotebook(name);
+            this.library = await loadLibrary();
+            // Written after reloading the library, which would drop unsaved in-memory preferences.
+            this.preference(LAST_GRID_KEY, JSON.stringify(grid));
+            this.preference(gridPreferenceKey(id), serializeNotebookGrid({default: grid, topics: {}, pages: {}}, [], []));
+            await this.selectNotebook(id);
+        }), 'Erstellen', fields);
+    }
+    private currentTopic(): Topic | undefined { return this.notebook.topics.find(topic => topic.pages.some(page => page.id === this.current.id)); }
+    private notebookGrid(): NotebookGrid { return parseNotebookGrid(this.library.preferences[gridPreferenceKey(this.notebook.id)]); }
+    private applyGrid(): void {
+        const css = gridBackground(effectiveGrid(this.notebookGrid(), this.currentTopic()?.id ?? '', this.current.id));
+        this.gridLayer.hidden = !css;
+        this.gridLayer.style.backgroundImage = css?.image ?? 'none';
+        this.gridLayer.style.backgroundSize = css?.size ?? '';
+        this.gridLayer.style.backgroundPosition = css?.position ?? '';
+    }
+    /** Grid of the notebook, the current topic and the current page; changes apply immediately. */
+    private gridDialog(): void {
+        const topic = this.currentTopic();
+        if (!topic) return;
+        const page = this.current, number = topic.pages.indexOf(page) + 1, dialog = this.dialog('Raster'), body = document.createElement('div');
+        const hint = document.createElement('p');
+        hint.textContent = 'Das Raster ist nur für Sie sichtbar: nicht in der Browseransicht der Studierenden und nicht im PDF-Export.';
+        const save = (change: (grid: NotebookGrid) => void): void => {
+            const grid = this.notebookGrid();
+            change(grid);
+            this.preference(gridPreferenceKey(this.notebook.id), serializeNotebookGrid(grid, this.notebook.topics.map(item => item.id), notebookPages(this.notebook).map(item => item.id)));
+            this.applyGrid();
+            render();
+        };
+        const render = (): void => {
+            const grid = this.notebookGrid(), topicGrid = grid.topics[topic.id] ?? null;
+            body.replaceChildren(
+                gridFields('Notizbuch (Standard)', grid.default, null, next => save(value => {
+                    if (!next) return;
+                    value.default = next;
+                    this.preference(LAST_GRID_KEY, JSON.stringify(next));
+                })),
+                gridFields(`Thema „${topic.title}“`, topicGrid, {label: 'Wie Notizbuch', grid: grid.default}, next => save(value => {
+                    if (next) value.topics[topic.id] = next; else delete value.topics[topic.id];
+                })),
+                gridFields(`Seite ${number}`, grid.pages[page.id] ?? null, {label: 'Wie Thema', grid: topicGrid ?? grid.default}, next => save(value => {
+                    if (next) value.pages[page.id] = next; else delete value.pages[page.id];
+                })));
+        };
+        render();
+        dialog.append(hint, body);
+        dialog.showModal();
+    }
+    private askTitle(title: string, initial: string, accept: (title: string) => void, confirmation = 'Erstellen', extra: HTMLElement | null = null): void {
         const dialog = this.dialog(title), form = document.createElement('form'), label = document.createElement('label');
         label.textContent = 'Titel';
         const input = document.createElement('input');
@@ -1218,6 +1290,7 @@ class Editor {
         input.maxLength = 200;
         label.append(input);
         form.append(label);
+        if (extra) form.append(extra);
         const submit = document.createElement('button');
         submit.type = 'submit';
         submit.className = 'primary';
