@@ -25,6 +25,7 @@ import { penPresetsForm } from './pen-presets-dialog.js';
 import { effectiveGrid, GRID_CSS_PROPERTIES, gridBackground, gridPreferenceKey, gridSpacingUnits, LAST_GRID_KEY, parseGrid, parseNotebookGrid, serializeNotebookGrid } from './page-grid.js';
 import type { NotebookGrid } from './page-grid.js';
 import { gridFields } from './grid-dialog.js';
+import { LAST_PAGES_KEY, parseLastPages, rememberPage, resumePage } from './last-pages.js';
 import '@livemitschrift/ui/style.css';
 function element<T extends HTMLElement>(id: string): T { const node = document.getElementById(id); if (!node)
     throw new Error(`Missing element: ${id}`); return node as T; }
@@ -664,11 +665,14 @@ class Editor {
         void this.pdf.set(page.background).catch(error => report(`PDF konnte nicht geladen werden: ${String(error)}`));
         this.preference('pageId', page.id);
         this.preference('notebookId', this.notebook.id);
+        const topic = this.currentTopic();
+        if (topic) this.preference(LAST_PAGES_KEY, JSON.stringify(rememberPage(parseLastPages(this.library.preferences[LAST_PAGES_KEY]), this.notebook.id, topic.id, page.id)));
     }
     private async selectPage(id: string): Promise<void> { if (!await this.queue.flush())
         throw new Error('Bitte die ausstehenden Änderungen zuerst speichern.'); this.display(findPage(this.notebook, id)); this.publisher?.publish({ type: 'viewport', position: { pageId: id, y: this.positions[id] ?? 0 } }); }
     private async selectNotebook(id: string): Promise<void> { if (!await this.queue.flush())
-        throw new Error('Bitte die ausstehenden Änderungen zuerst speichern.'); const loaded = await loadNotebook(id); this.loaded = loaded; this.attachPublisher(); this.display(notebookPages(this.notebook)[0]!); }
+        throw new Error('Bitte die ausstehenden Änderungen zuerst speichern.'); const loaded = await loadNotebook(id); this.loaded = loaded; this.attachPublisher();
+        this.display(resumePage(notebookPages(this.notebook), parseLastPages(this.library.preferences[LAST_PAGES_KEY]).notebooks[id])!); }
     private run(action: () => Promise<void>): void {
         if (this.busy || !this.ready || this.closing)
             return;
@@ -1160,7 +1164,7 @@ class Editor {
             nodes.push(node);
             node.type = 'button';
             node.className = 'topic-button';
-            node.title = `Thema „${topic.title}“ öffnen: ${topic.pages.length} Seiten. Startet auf der ersten Seite. Ziehen ändert die Reihenfolge, Rechtsklick zeigt weitere Aktionen.`;
+            node.title = `Thema „${topic.title}“ öffnen: ${topic.pages.length} Seiten. Öffnet die zuletzt angesehene Seite. Ziehen ändert die Reihenfolge, Rechtsklick zeigt weitere Aktionen.`;
             node.addEventListener('contextmenu', event => this.topicMenu(event, topic.id));
             node.addEventListener('pointerdown', event => { if (event.button === 0 && !this.busy) drag = {id: topic.id, pointer: event.pointerId, y: event.clientY, moving: false, target: -1}; });
             node.addEventListener('pointermove', event => {
@@ -1188,7 +1192,7 @@ class Editor {
             if (topic.pages.some(page => page.id === this.current.id))
                 node.setAttribute('aria-current', 'page');
             node.disabled = this.busy;
-            node.addEventListener('click', () => { if (suppressClick) { suppressClick = false; return; } drawer.hidden = true; this.run(() => this.selectPage(topic.pages[0]!.id)); });
+            node.addEventListener('click', () => { if (suppressClick) { suppressClick = false; return; } drawer.hidden = true; this.run(() => this.selectPage(resumePage(topic.pages, parseLastPages(this.library.preferences[LAST_PAGES_KEY]).topics[topic.id])!.id)); });
             drawer.append(node);
         }
     }
