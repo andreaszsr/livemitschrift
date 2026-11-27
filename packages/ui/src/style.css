@@ -84,3 +84,4 @@ button.danger{color:#a33f45}button.primary.danger{background:#f8e3e4;color:#9335
 .notes-list{display:flex;flex-direction:column;gap:6px;max-height:50vh;overflow:auto}
 .notes-entry{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;padding:8px 10px;border:1px solid var(--line);border-radius:6px;font-size:13px}
 .notes-entry small{font-size:11px;color:var(--muted)}.notes-entry span{overflow-wrap:anywhere}
+.check-option{display:flex;align-items:center;gap:8px;font-size:13px}label.check-option input{display:inline-block;width:auto;margin:0}

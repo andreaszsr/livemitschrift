@@ -1,5 +1,6 @@
 import { validSyncPage, applyNotebookEvent, findPage, InkDocument, LaserPointer, notebookPages, notebookPdfPlacement, PAGE_SIZE, ViewportInkRenderer } from '@livemitschrift/core';
-import type { Notebook, NotebookEvent, NotebookSnapshot, NotePage, ViewPosition } from '@livemitschrift/core';
+import type { Notebook, NotebookEvent, NotebookSnapshot, NotePage, Topic, ViewPosition } from '@livemitschrift/core';
+import type { ExportNotes } from '@livemitschrift/pdf/export';
 import { NotebookPdfRenderer, PageThumbnails } from '@livemitschrift/pdf';
 import { addZoomLockAction, button, escapeHtml, icon, Toolbar, ViewportZoom, zoomControls } from '@livemitschrift/ui';
 import { PagedConnection } from './paged-connection.js';
@@ -220,12 +221,37 @@ async function exportPdf(): Promise<void> {
     // Capture the requested page list before Follow can switch topics.
     const topic = {...selected, pages: selected.pages.map(page => ({...page, strokes: []}))};
     const view = element<HTMLDialogElement>('export-dialog'), link = element<HTMLAnchorElement>('export-download');
-    const controller = new AbortController(); exportController = controller;
     if (exportUrl) URL.revokeObjectURL(exportUrl);
     exportUrl = null; link.hidden = true; link.removeAttribute('href');
     element('export-topic').textContent = topic.title;
+    // With own notes on this topic, ask how to include them before building.
+    const byPage: ExportNotes['byPage'] = new Map();
+    for (const page of topic.pages) {
+        const list = pageNotes(notes.all, page.id).map(({note, number}) => ({number, x: note.x, y: note.y, text: note.text, updated: note.updated}));
+        if (list.length) byPage.set(page.id, list);
+    }
+    const options = element('export-options');
+    options.hidden = byPage.size === 0;
+    element('export-progress').textContent = '';
+    if (byPage.size) {
+        element<HTMLInputElement>('export-notes').checked = true;
+        element<HTMLInputElement>('export-notes-print').checked = false;
+        element<HTMLButtonElement>('export-start').onclick = () => {
+            options.hidden = true;
+            void buildPdf(topic, element<HTMLInputElement>('export-notes').checked ? {byPage, printable: element<HTMLInputElement>('export-notes-print').checked} : undefined);
+        };
+        view.showModal();
+        return;
+    }
+    view.showModal();
+    await buildPdf(topic);
+}
+async function buildPdf(topic: Topic, noteOptions?: ExportNotes): Promise<void> {
+    if (exportController) return;
+    const view = element<HTMLDialogElement>('export-dialog'), link = element<HTMLAnchorElement>('export-download');
+    const controller = new AbortController(); exportController = controller;
     element('export-progress').textContent = 'PDF wird vorbereitet …';
-    view.showModal(); update();
+    update();
     const read = async (path: string): Promise<Response> => {
         controller.signal.throwIfAborted();
         const timeout = window.setTimeout(() => controller.abort(), 30000);
@@ -251,7 +277,7 @@ async function exportPdf(): Promise<void> {
         const bytes = await exportTopicPdf(confirmed, async (asset, page) => {
             controller.signal.throwIfAborted();
             return new Uint8Array(await (await read(`/api/notebook/${identity}/pdf/${asset}/page/${page ?? 1}`)).arrayBuffer());
-        }, {pagewiseAssets: true});
+        }, {pagewiseAssets: true, notes: noteOptions});
         controller.signal.throwIfAborted();
         exportUrl = URL.createObjectURL(new Blob([bytes.slice().buffer as ArrayBuffer], {type: 'application/pdf'}));
         link.href = exportUrl; link.download = exportFilename(topic.title); link.hidden = false;

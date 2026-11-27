@@ -1,5 +1,6 @@
 """Download a real reader PDF in an isolated headless Chrome profile/server."""
 import argparse
+import base64
 import copy
 import hashlib
 import json
@@ -159,10 +160,24 @@ def main():
                     assert before==after, 'Export changed navigation/Follow.'
                     assert browser.evaluate("fetch('/api/sync/pdf/'+'a'.repeat(64),{method:'POST',body:'%PDF-'}).then(r=>r.status)")==401
                     student_notes(browser, base, identity)
+                    # Export again: the note becomes a real PDF comment on its page.
+                    browser.evaluate("document.querySelector('#toolbar [data-action=export]').click();true")
+                    browser.wait("!document.getElementById('export-options').hidden&&document.getElementById('export-notes').checked&&!document.getElementById('export-notes-print').checked")
+                    # Chrome holds back a second automatic download, so read the generated blob instead.
+                    browser.evaluate("(() => {const create=URL.createObjectURL;URL.createObjectURL=blob=>{window.__exportBlob=blob;return create(blob);};return true;})()")
+                    browser.evaluate("document.getElementById('export-start').click();true")
+                    browser.wait("!document.getElementById('export-download').hidden&&!!window.__exportBlob")
+                    encoded=browser.evaluate("window.__exportBlob.arrayBuffer().then(b=>{let s='';for(const c of new Uint8Array(b))s+=String.fromCharCode(c);return btoa(s);})")
+                    noted=ROOT/'output/pdf/student-notes-export.pdf'; noted.write_bytes(base64.b64decode(encoded))
+                    comments=[annotation.get_object() for annotation in PdfReader(noted).pages[0].get('/Annots', [])]
+                    assert [(c['/Subtype'], c['/Contents']) for c in comments]==[('/Text', NOTE)], comments
+                    browser.evaluate("document.getElementById('export-close').click();true")
+                    sent=[json.dumps(event['params']) for event in browser.events if event['method'] in ('Network.requestWillBeSent','Network.webSocketFrameSent')]
+                    assert not any('Privatnotiz-7f3a' in item for item in sent), 'A note left the browser during export.'
                     assert 'Privatnotiz-7f3a' not in (directory/'server.log').read_text()
                     destination=ROOT/'output/pdf/student-browser-export.pdf'; destination.parent.mkdir(parents=True,exist_ok=True)
                     shutil.copyfile(file,destination)
-                    print('BROWSER_EXPORT_PASS actual four-page Chrome download, both PDF slides and long ink, unchanged navigation/Follow, no writer credentials; private note survives reload with a safe link and never reaches the network; instructor disconnected.')
+                    print('BROWSER_EXPORT_PASS actual four-page Chrome download, both PDF slides and long ink, unchanged navigation/Follow, no writer credentials; private note survives reload with a safe link, exports as a PDF comment and never reaches the network; instructor disconnected.')
             finally:
                 stop(chrome); stop(server)
 

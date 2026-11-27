@@ -60,7 +60,8 @@ or browse on their own, and they need no account or app.
   - The viewer reconnects automatically.
   - Students can pin private text notes to any spot of a page. Notes stay in
     their browser only (no account, nothing sent to the server) and can be
-    saved to and loaded from a file.
+    saved to and loaded from a file. The PDF download can include them as PDF
+    comments (sticky notes), optionally also as printable text.
 - **PDF download.** Students can download the current topic as a PDF, including
   the slides and the confirmed ink.
 - **Reliable sync.** Changes go through a transactional local outbox. Notes stay
