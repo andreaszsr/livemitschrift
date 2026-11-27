@@ -35,6 +35,9 @@ or browse on their own, and they need no account or app.
   - Straight lines: rest the pen at the end of a stroke, then adjust the end
     point before lifting the pen.
   - Translucent highlighter with its own colors and widths.
+  - Shapes: rectangle, circle (dragged from the centre), coordinate system
+    (one quadrant or an axis cross) with ticks at the grid spacing. "Am Raster
+    einrasten" snaps shapes and straight lines to the grid (5 mm without one).
   - Lasso to move, copy, cut, paste and delete strokes.
   - Laser pointer, which readers see too and which is never saved.
   - Undo and redo.
@@ -142,7 +145,8 @@ Plain HTTP is accepted only on loopback. Remote servers require HTTPS.
 ## Using it
 
 - **Writing.** The writing bar has page navigation, undo/redo, pen, eraser,
-  highlighter, lasso, laser pointer, grid and your color and width favorites.
+  highlighter, lasso, laser pointer, grid, shapes, snapping and your color and
+  width favorites.
   Keyboard shortcuts: P pen, E eraser, H highlighter, S lasso, L laser,
   F fullscreen.
 - **Notebooks.** The drawer button opens notebooks and topics.
