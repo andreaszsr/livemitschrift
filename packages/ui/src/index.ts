@@ -37,6 +37,11 @@ export const icons: Record<string, string> = {
     qr: '<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3h-3Z M20 14v.01 M14 20h.01 M17 20h4v-3"/>',
     note: '<path d="M4 4h16v11l-5 5H4Z M15 20v-5h5 M8 9h8 M8 13h4"/>',
     notes: '<path d="M8 3h12v14 M4 7h12v14H4Z M7 12h6 M7 16h4"/>',
+    'shape-rectangle': '<path d="M4 6h16v12H4Z"/>',
+    'shape-circle': '<circle cx="12" cy="12" r="8"/>',
+    'shape-quadrant': '<path d="M5 20V4 M5 20h15 M5 4 3 7 M5 4l2 3 M20 20l-3-2 M20 20l-3 2 M9 19v2 M13 19v2 M4 16h2 M4 12h2"/>',
+    'shape-cross': '<path d="M12 3v18 M3 12h18 M12 3l-2 3 M12 3l2 3 M21 12l-3-2 M21 12l-3 2"/>',
+    snap: '<path d="M6 4v8a6 6 0 0 0 12 0V4h-4v8a2 2 0 0 1-4 0V4Z M6 8h4 M14 8h4"/>',
     grid: '<path d="M4 4h16v16H4Z M4 9.3h16 M4 14.7h16 M9.3 4v16 M14.7 4v16"/>',
     copy: '<rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h4"/>',
 };

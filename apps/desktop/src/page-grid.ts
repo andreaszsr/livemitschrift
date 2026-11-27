@@ -72,24 +72,31 @@ export function gridSpacingUnits(spacing: GridSpacing): number {
     return spacing * PAGE_WIDTH / PAGE_WIDTH_MM;
 }
 
+/** CSS properties set on the grid layer; every other grid property is cleared. */
+export const GRID_CSS_PROPERTIES = ['background-image', 'mask-image', 'mask-composite', '-webkit-mask-image', '-webkit-mask-composite'] as const;
+
 /**
- * CSS for the grid layer. Sizes use container query units of the paper
- * (100cqw = paper width = 1200 document units), so the grid scales with the
- * zoom without JavaScript. Lines and dots sit on multiples of the spacing,
- * measured from the page's top left corner.
+ * CSS for the grid layer. The period uses container query units of the paper
+ * (100cqw = paper width = 1200 document units), so the grid zooms without
+ * JavaScript. Repeating gradients span the whole layer: WebKit rounds the
+ * size of background tiles to whole pixels, which would let a tiled grid drift
+ * away from the snapping grid, while a gradient period stays fractional.
+ * Lines and dots are centred on multiples of the spacing from the page's top
+ * left corner. Dots are the intersection of vertical and horizontal stripes.
  */
-export function gridBackground(grid: Grid): {image: string; size: string; position: string} | null {
+export function gridBackground(grid: Grid): Partial<Record<typeof GRID_CSS_PROPERTIES[number], string>> | null {
     if (grid.style === 'none') return null;
     const cell = `calc(100cqw * ${gridSpacingUnits(grid.spacing) / PAGE_WIDTH})`;
-    const line = '#dbe2ec', dot = '#aeb9c9';
+    const stripes = (direction: string, color: string, half: number): string =>
+        `repeating-linear-gradient(${direction}, ${color} -${half}px ${half}px, transparent ${half}px calc(${cell} - ${half}px))`;
+    const line = '#dbe2ec';
     switch (grid.style) {
-        case 'squares': return {
-            image: `linear-gradient(to right, ${line} 1px, transparent 1px), linear-gradient(to bottom, ${line} 1px, transparent 1px)`,
-            size: `${cell} ${cell}`, position: '0 0'};
-        case 'lines': return {image: `linear-gradient(to bottom, ${line} 1px, transparent 1px)`, size: `100% ${cell}`, position: '0 0'};
-        case 'dots': return {
-            // Each tile's dot is centred, so shift by half a tile onto the grid points.
-            image: `radial-gradient(circle, ${dot} 1.3px, transparent 1.6px)`,
-            size: `${cell} ${cell}`, position: `calc(${cell} / -2) calc(${cell} / -2)`};
+        case 'squares': return {'background-image': `${stripes('to right', line, .5)}, ${stripes('to bottom', line, .5)}`};
+        case 'lines': return {'background-image': stripes('to bottom', line, .5)};
+        case 'dots': {
+            const mask = `${stripes('to right', '#000', 1)}, ${stripes('to bottom', '#000', 1)}`;
+            return {'background-image': 'linear-gradient(#aeb9c9, #aeb9c9)', 'mask-image': mask, 'mask-composite': 'intersect',
+                '-webkit-mask-image': mask, '-webkit-mask-composite': 'source-in'};
+        }
     }
 }

@@ -1,7 +1,9 @@
-import { applyNotebookEvent, createStrokeId, DrawingSession, EditHistory, findPage, hitStroke, HoldDetector, pressureWidth, straightLine, clampOffset, lassoSelection, pasteStrokes, strokeBounds, translateStrokes, InkDocument, LaserPointer, MAX_DOCUMENT_HEIGHT, MAX_PDF_BYTES, notebookPages, notebookPdfPlacement, PAGE_SIZE, PenInput, ViewportInkRenderer } from '@livemitschrift/core';
+import { applyNotebookEvent, createStrokeId, LINE_MIN_LENGTH_PX, SHAPE_KINDS, SHAPE_PRESSURE, shapeStrokes, snapToGrid, DrawingSession, EditHistory, findPage, hitStroke, HoldDetector, pressureWidth, straightLine, clampOffset, lassoSelection, pasteStrokes, strokeBounds, translateStrokes, InkDocument, LaserPointer, MAX_DOCUMENT_HEIGHT, MAX_PDF_BYTES, notebookPages, notebookPdfPlacement, PAGE_SIZE, PenInput, ViewportInkRenderer } from '@livemitschrift/core';
+import type { ShapeKind } from '@livemitschrift/core';
 import type { InputHandlers, InputObservation, NotebookSnapshot, Notebook, NotePage, PageEdit, Topic, Point, Stroke, Vector, ViewPosition } from '@livemitschrift/core';
 import { SelectionOverlay } from './selection-overlay.js';
 import { LinePreview } from './line-preview.js';
+import { ShapePreview } from './shape-preview.js';
 import { loadPdfDocument, NotebookPdfRenderer, PageThumbnails } from '@livemitschrift/pdf';
 import { button, escapeHtml, icon, Toolbar, toolbarPreferences, ViewportZoom, zoomControls } from '@livemitschrift/ui';
 import type { ToolbarAction } from '@livemitschrift/ui';
@@ -20,7 +22,7 @@ import { InputDiagnostics } from './input-diagnostics.js';
 import { penPreferences, updatedWritingPins, writingActionIds } from './pen-presets.js';
 import type { PenPreferences } from './pen-presets.js';
 import { penPresetsForm } from './pen-presets-dialog.js';
-import { effectiveGrid, gridBackground, gridPreferenceKey, LAST_GRID_KEY, parseGrid, parseNotebookGrid, serializeNotebookGrid } from './page-grid.js';
+import { effectiveGrid, GRID_CSS_PROPERTIES, gridBackground, gridPreferenceKey, gridSpacingUnits, LAST_GRID_KEY, parseGrid, parseNotebookGrid, serializeNotebookGrid } from './page-grid.js';
 import type { NotebookGrid } from './page-grid.js';
 import { gridFields } from './grid-dialog.js';
 import '@livemitschrift/ui/style.css';
@@ -33,7 +35,11 @@ function parse(value: string | undefined): unknown { try {
 catch {
     return null;
 } }
-type Tool = 'pen' | 'eraser' | 'highlighter' | 'laser' | 'lasso';
+type Tool = 'pen' | 'eraser' | 'highlighter' | 'laser' | 'lasso' | 'shape';
+const SHAPE_LABELS: Record<ShapeKind, string> = {rectangle: 'Rechteck', circle: 'Kreis', quadrant: 'Koordinatensystem', cross: 'Achsenkreuz'};
+const SHAPE_HINTS: Record<ShapeKind, string> = {rectangle: 'Von Ecke zu Ecke ziehen.', circle: 'Vom Mittelpunkt aus ziehen; der Abstand ist der Radius.', quadrant: 'Am Ursprung ansetzen und zum Ende der Achsen ziehen (ein Quadrant).', cross: 'Ein Rechteck aufziehen; die Achsen kreuzen sich in der Mitte (vier Quadranten).'};
+/** Snap spacing when the page has no visible grid. */
+const DEFAULT_SNAP_MM = 5;
 const TOOL_KEYS: Record<string, Tool> = {p: 'pen', e: 'eraser', h: 'highlighter', l: 'laser', s: 'lasso'};
 const initialPage: NotePage = { id: 'local-page', title: 'Seite 1', ...PAGE_SIZE, background: null, strokes: [], nextOrder: 0 };
 class Editor {
@@ -86,6 +92,10 @@ class Editor {
     private readonly hold = new HoldDetector();
     private holdTimer: number | undefined;
     private straight: {start: Point; end: Point} | null = null;
+    private shapeKind: ShapeKind = 'rectangle';
+    private shapeDrag: {start: Point; end: Point} | null = null;
+    private snap = false;
+    private readonly shapePreview: ShapePreview;
     private readonly linePreview: LinePreview;
     /** Lasso state: the selected strokes (as on the page), the path being drawn, an active move. */
     private selection: Stroke[] = [];
@@ -126,6 +136,7 @@ class Editor {
         this.laser = new LaserPointer(this.paper, this.pageSize);
         this.selectionOverlay = new SelectionOverlay(this.paper, this.pageSize);
         this.linePreview = new LinePreview(this.paper, this.pageSize);
+        this.shapePreview = new ShapePreview(this.paper, this.pageSize);
         this.pdf = new NotebookPdfRenderer(element<HTMLCanvasElement>('pdf-background'), readPdfAsset, error => { element('pdf-status').textContent = String(error); report(`PDF-Darstellung fehlgeschlagen: ${String(error)}`); });
         this.toolbar = new Toolbar(element('toolbar'), this.writingIds, true,
             preferences => { this.preference('toolbar-writing', JSON.stringify(preferences)); this.updateToolbar(); },
@@ -153,6 +164,7 @@ class Editor {
                 this.metrics.accept([point], this.renderer.pixelsPerUnit, true);
                 if (this.drawingTool === 'laser') { this.laserActive = true; this.pointer(point); }
                 else if (this.drawingTool === 'lasso') this.lassoStart(point);
+                else if (this.drawingTool === 'shape') { this.shapeDrag = {start: point, end: point}; this.previewShape(); }
                 else if (this.drawingTool === 'eraser') {
                     this.erased.clear();
                     this.lastErase = point;
@@ -170,8 +182,12 @@ class Editor {
             else if (this.drawingTool === 'eraser')
                 for (const point of points)
                     this.erase(point);
+            else if (this.shapeDrag) {
+                this.shapeDrag.end = points.at(-1)!;
+                this.previewShape();
+            }
             else if (this.straight) {
-                this.straight.end = {...this.straight.end, x: points.at(-1)!.x, y: points.at(-1)!.y};
+                this.straight.end = {...this.straight.end, ...this.snapped(points.at(-1)!)};
                 this.linePreview.move(this.straight.end);
             }
             else {
@@ -415,13 +431,23 @@ class Editor {
             this.writingIds.splice(0, this.writingIds.length, ...writingActionIds(this.pen));
             const previousLayout = toolbarPreferences(parse(this.library.preferences['toolbar-editor']), this.writingIds, true);
             const toolbarPreference = parse(this.library.preferences['toolbar-writing']) ?? {...previousLayout, pinned: [...this.writingIds]};
-            // The grid joined the writing bar later: show it once on existing layouts, after "blank page".
-            if (this.library.preferences['toolbar-grid-added'] !== 'true' && toolbarPreference && typeof toolbarPreference === 'object' && Array.isArray((toolbarPreference as {pinned?: unknown}).pinned)) {
+            // Actions that joined the writing bar later appear once on existing layouts.
+            if (toolbarPreference && typeof toolbarPreference === 'object' && Array.isArray((toolbarPreference as {pinned?: unknown}).pinned)) {
                 const pinned = (toolbarPreference as {pinned: unknown[]}).pinned;
-                if (!pinned.includes('grid')) pinned.splice(pinned.includes('blank-page') ? pinned.indexOf('blank-page') + 1 : pinned.length, 0, 'grid');
+                for (const [flag, ids] of [['toolbar-grid-added', ['grid']], ['toolbar-shapes-added', ['shape', 'snap']]] as const) {
+                    if (this.library.preferences[flag] === 'true') continue;
+                    for (const id of ids) if (!pinned.includes(id)) {
+                        const previous = writingActionIds(this.pen)[writingActionIds(this.pen).indexOf(id) - 1]!;
+                        pinned.splice(pinned.includes(previous) ? pinned.indexOf(previous) + 1 : pinned.length, 0, id);
+                    }
+                }
             }
             this.toolbar.configure(toolbarPreference);
             this.preference('toolbar-grid-added', 'true');
+            this.preference('toolbar-shapes-added', 'true');
+            const storedShape = this.library.preferences['shape-kind'];
+            if (SHAPE_KINDS.includes(storedShape as ShapeKind)) this.shapeKind = storedShape as ShapeKind;
+            this.snap = this.library.preferences.snap === 'true';
             this.preference('toolbar-writing', JSON.stringify(this.toolbar.preferences));
             this.zoom.configure(parse(this.library.preferences['zoom-editor']));
             this.preference('zoom-editor', JSON.stringify(this.zoom.preferences));
@@ -676,10 +702,69 @@ class Editor {
         this.display(this.notebook.topics.find(topic => topic.id === id)!.pages[0]!);
         this.publisher?.refresh();
     }
-    private finishGesture(): void { if (this.laserActive) { this.laserActive = false; this.pointer(null); } if (this.lassoPath || this.move) this.lassoEnd(); this.endHold(); this.session.finish(); if (this.erased.size) {
+    private finishGesture(): void { if (this.laserActive) { this.laserActive = false; this.pointer(null); } if (this.lassoPath || this.move) this.lassoEnd(); this.endShape(); this.endHold(); this.session.finish(); if (this.erased.size) {
         this.queue.enqueue(this.history().record(this.current.id, this.current.height, [], [...this.erased.values()]));
         this.erased.clear();
     } this.lastErase = null; this.status(); }
+    // ---- Shapes and snapping ---------------------------------------------------
+    /** Grid spacing for snapping and axis ticks: the page's grid, else 5 mm. */
+    private gridSpacing(): number {
+        const grid = effectiveGrid(this.notebookGrid(), this.currentTopic()?.id ?? '', this.current.id);
+        return gridSpacingUnits(grid.style === 'none' ? DEFAULT_SNAP_MM : grid.spacing);
+    }
+    private snapped(point: {x: number; y: number}): {x: number; y: number} {
+        return this.snap ? snapToGrid(point, this.gridSpacing()) : {x: point.x, y: point.y};
+    }
+    private shapeGeometry(): Point[][] {
+        const drag = this.shapeDrag, spacing = this.gridSpacing();
+        if (!drag) return [];
+        // Clamp to the page width and the maximal page height; document coordinates are never negative.
+        const clamp = (point: Point): Point => ({...point, x: Math.min(this.pageSize.width, Math.max(0, point.x)), y: Math.min(MAX_DOCUMENT_HEIGHT, Math.max(0, point.y))});
+        return shapeStrokes(this.shapeKind, drag.start, drag.end, {tickSpacing: spacing, snap: this.snap ? spacing : null}).map(points => points.map(clamp));
+    }
+    private previewShape(): void {
+        this.shapePreview.show(this.shapeGeometry(), this.color, pressureWidth(this.width, SHAPE_PRESSURE));
+    }
+    /** Commit the dragged shape as ordinary strokes in one undoable edit; tiny drags (taps) draw nothing. */
+    private endShape(): void {
+        const drag = this.shapeDrag;
+        if (!drag) return;
+        const strokes = this.shapeGeometry();
+        this.shapeDrag = null;
+        this.shapePreview.hide();
+        if (Math.hypot(drag.end.x - drag.start.x, drag.end.y - drag.start.y) < LINE_MIN_LENGTH_PX / this.renderer.pixelsPerUnit || !strokes.length) return;
+        const lowest = Math.max(...strokes.flat().map(point => point.y));
+        if (lowest > this.current.height) {
+            this.current.height = Math.min(MAX_DOCUMENT_HEIGHT, Math.ceil(lowest) + 200);
+            this.pageSize.height = this.current.height;
+            this.sizePaper();
+        }
+        const inserted: Stroke[] = strokes.map(points => ({id: createStrokeId(), color: this.color, width: this.width, order: this.current.nextOrder++, complete: true, points}));
+        this.commitEdit(this.history().record(this.current.id, this.current.height, inserted, []));
+    }
+    private shapeMenu(): void {
+        const dialog = this.dialog('Form wählen'), list = document.createElement('div');
+        list.className = 'settings-actions';
+        for (const kind of SHAPE_KINDS) {
+            const node = button(SHAPE_LABELS[kind], `shape-${kind}`, () => {
+                dialog.close();
+                this.shapeKind = kind;
+                this.preference('shape-kind', kind);
+                this.selectTool('shape');
+            }, `${SHAPE_LABELS[kind]}: ${SHAPE_HINTS[kind]}`);
+            node.dataset.shape = kind;
+            node.setAttribute('aria-pressed', String(kind === this.shapeKind));
+            node.append(document.createTextNode(SHAPE_LABELS[kind]));
+            list.append(node);
+        }
+        dialog.append(list);
+        dialog.showModal();
+    }
+    private toggleSnap(): void {
+        this.snap = !this.snap;
+        this.preference('snap', String(this.snap));
+        this.status();
+    }
     // ---- Hold-to-straighten ---------------------------------------------------
     // The pen input sends no samples while the pen rests, so a timer checks for
     // the hold; it is restarted whenever the pen leaves the hold radius.
@@ -708,7 +793,8 @@ class Editor {
         const stroke = this.session.discard();
         this.hold.reset();
         if (!stroke) return;
-        const [start, stop] = straightLine(stroke.points, end);
+        const [freeStart, freeStop] = straightLine(stroke.points, end);
+        const start = {...freeStart, ...this.snapped(freeStart)}, stop = {...freeStop, ...this.snapped(freeStop)};
         this.straight = {start, end: stop};
         this.current.strokes = [...this.ink.strokes.values()];
         this.renderer.invalidate();
@@ -881,6 +967,8 @@ class Editor {
             blank: 'Ein neues Thema mit einer leeren Schreibseite im aktuellen Notizbuch anlegen.',
             'blank-page': 'Direkt nach der aktuellen Seite eine leere Schreibseite einfügen.',
             zoom: 'Vergrößerung, Anpassung an die Fensterbreite und Zoom-Sperre einstellen.',
+            shape: `${SHAPE_LABELS[this.shapeKind]} zeichnen: ${SHAPE_HINTS[this.shapeKind]} Erneut tippen, um Rechteck, Kreis, Koordinatensystem oder Achsenkreuz zu wählen.`,
+            snap: 'Ecken, Mittelpunkte, Achsen und die Enden gerader Linien auf Rasterpunkte setzen. Ohne Raster auf der Seite gilt ein 5-mm-Raster.',
             grid: 'Karo-, Linien- oder Punktraster für Notizbuch, Thema oder Seite einstellen. Nur für Sie sichtbar, nicht für Studierende und nicht im PDF-Export.',
             'zoom-lock': this.zoom.locked ? 'Änderungen der Vergrößerung wieder erlauben.' : 'Aktuelle Vergrößerung sperren, damit Zwei-Finger-Gesten sie nicht versehentlich ändern.',
             share: 'Serververbindung einrichten und das gesamte Notizbuch über einen schreibgeschützten Browserlink teilen.',
@@ -905,6 +993,8 @@ class Editor {
             action('laser', 'Laserpointer', 'laser', () => this.selectTool('laser'), {pressed: this.drawingTool === 'laser'}),
             this.blankPageAction(action),
             action('grid', 'Raster', 'grid', () => this.gridDialog()),
+            action('shape', `Form: ${SHAPE_LABELS[this.shapeKind]}`, `shape-${this.shapeKind}`, () => { if (this.tool === 'shape') this.shapeMenu(); else this.selectTool('shape'); }, {pressed: this.drawingTool === 'shape'}),
+            action('snap', 'Am Raster einrasten', 'snap', () => this.toggleSnap(), {pressed: this.snap}),
             // While marking, the shared width/color slots show the marker presets.
             ...(marking ? this.pen.markerWidths.map((width, index) => action(`width-${index}`, `Markerdicke ${width.toLocaleString('de-DE')}`, 'marker',
                 () => this.chooseMarker(this.pen.markerColor, width), {description: `Mit Markerdicke ${width.toLocaleString('de-DE')} weiter markieren.`, strokeWidth: width, pressed: this.pen.markerWidth === width}))
@@ -1243,9 +1333,7 @@ class Editor {
     private applyGrid(): void {
         const css = gridBackground(effectiveGrid(this.notebookGrid(), this.currentTopic()?.id ?? '', this.current.id));
         this.gridLayer.hidden = !css;
-        this.gridLayer.style.backgroundImage = css?.image ?? 'none';
-        this.gridLayer.style.backgroundSize = css?.size ?? '';
-        this.gridLayer.style.backgroundPosition = css?.position ?? '';
+        for (const property of GRID_CSS_PROPERTIES) this.gridLayer.style.setProperty(property, css?.[property] ?? '');
     }
     /** Grid of the notebook, the current topic and the current page; changes apply immediately. */
     private gridDialog(): void {

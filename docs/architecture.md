@@ -39,6 +39,12 @@ system does not support collaborative editing.
     the stroke becomes a straight line whose end follows the pen until pen-up.
     Readers already saw the freehand ink, so it is ended and removed with an
     edit; the line is then sent as an ordinary two-point stroke.
+  - Shapes (rectangle, circle, quadrant axes, axis cross) are built in
+    `packages/core/src/shapes.ts` as ordinary polylines with uniform pressure
+    and committed on pen-up as one undoable insert edit; axis ticks and arrow
+    heads are detours within the axis stroke. Snapping rounds defining points
+    to the page's grid spacing (5 mm without a grid); it also applies to the
+    ends of hold-to-straighten lines.
 - **Rendering.** Strokes are smoothed when drawn; the stored points stay unchanged.
   - Page grid: a CSS background layer below the PDF and ink canvases, sized in
     container query units of the paper, so it zooms without redrawing. Grid

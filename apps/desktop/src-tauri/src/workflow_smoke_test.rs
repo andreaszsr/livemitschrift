@@ -63,16 +63,36 @@ fn draw(webview:&Webview<Wry>,x:f64,y:f64)->TestResult<()>{
     wait_for(webview,&format!("(() => {{const p=document.getElementById('paper').getBoundingClientRect(),s=p.width/1200;return document.elementFromPoint(p.left+{x}*s,p.top+{y}*s)===document.getElementById('page');}})()"))?;
     evaluate(webview,&format!("(() => {{const p=document.getElementById('paper').getBoundingClientRect(),s=p.width/1200;const x=p.left+{x}*s,y=p.top+{y}*s;for(const [phase,dx,buttons]of [['down',0,1],['drag',15,1],['up',15,0]])window.dispatchEvent(new CustomEvent('livemitschrift-native-input',{{detail:{{phase,x:x+dx,y,pointerType:'mouse',pressure:0,buttons,button:0,eraser:false}}}}));return true;}})()"))?;Ok(())
 }
+/// The writing canvas covers only the visible area and follows scrolling one frame later; wait until it is under the point.
+fn canvas_at(webview:&Webview<Wry>,x:f64,y:f64)->TestResult<()>{
+    wait_for(webview,&format!("(() => {{const p=document.getElementById('paper').getBoundingClientRect(),s=p.width/1200;return document.elementFromPoint(p.left+{x}*s,p.top+{y}*s)===document.getElementById('page');}})()"))
+}
 fn pen(webview:&Webview<Wry>,phase:&str,x:f64,y:f64,buttons:u8)->TestResult<()>{
     evaluate(webview,&format!("(() => {{const p=document.getElementById('paper').getBoundingClientRect(),s=p.width/1200;window.dispatchEvent(new CustomEvent('livemitschrift-native-input',{{detail:{{phase:'{phase}',x:p.left+{x}*s,y:p.top+{y}*s,pointerType:'mouse',pressure:0,buttons:{buttons},button:0,eraser:false}}}}));return true;}})()"))?;Ok(())
 }
 /// Hold-to-straighten: a wavy stroke rests at (500, y), turns into a line preview, then its end follows the pen to (550, y).
 fn straight_line(webview:&Webview<Wry>,y:f64)->TestResult<()>{
+    canvas_at(webview,300.0,y)?;
     pen(webview,"down",300.0,y,1)?;
     for (x,dy) in [(350.0,40.0),(400.0,50.0),(450.0,40.0),(500.0,0.0)]{pen(webview,"drag",x,y+dy,1)?;}
     wait_for(webview,"document.querySelector('.selection-overlay line')?.closest('svg').style.display===''")?;
     pen(webview,"drag",550.0,y,1)?;pen(webview,"up",550.0,y,0)?;
     wait_for(webview,"document.querySelector('.selection-overlay line').closest('svg').style.display==='none'")
+}
+fn stroke_total(webview:&Webview<Wry>)->TestResult<usize>{
+    Ok(evaluate(webview,"parseInt(document.getElementById('stroke-count').textContent)")?.as_u64().ok_or("Missing stroke count")? as usize)
+}
+/// Drag a shape with the pen; returns the preview path shown just before pen-up.
+fn shape(webview:&Webview<Wry>,from:(f64,f64),to:(f64,f64))->TestResult<String>{
+    canvas_at(webview,from.0,from.1)?;
+    pen(webview,"down",from.0,from.1,1)?;
+    pen(webview,"drag",(from.0+to.0)/2.0,(from.1+to.1)/2.0,1)?;
+    pen(webview,"drag",to.0,to.1,1)?;
+    wait_for(webview,"document.querySelector('.shape-preview').style.display===''")?;
+    let path=evaluate(webview,"document.querySelector('.shape-preview path').getAttribute('d')")?;
+    pen(webview,"up",to.0,to.1,0)?;
+    wait_for(webview,"document.querySelector('.shape-preview').style.display==='none'")?;
+    Ok(path.as_str().unwrap_or_default().to_string())
 }
 fn scroll(webview:&Webview<Wry>,y:f64)->TestResult<()>{
     evaluate(webview,&format!("(() => {{const p=document.getElementById('paper').getBoundingClientRect();document.getElementById('viewport').scrollTop={y}*p.width/1200;return true;}})()"))?;
@@ -338,8 +358,9 @@ fn library(webview:&Webview<Wry>,directory:&Path)->TestResult<()> {
     wait_for(webview,"document.querySelectorAll('#editor-dialog .grid-fields').length===3&&document.querySelector('.page-grid').hidden")?;
     let choose=|scope:usize,value:&str|evaluate(webview,&format!("(() => {{const s=document.querySelectorAll('#editor-dialog .grid-fields')[{scope}].querySelector('select');s.value='{value}';s.dispatchEvent(new Event('change'));return true;}})()"));
     choose(0,"squares")?;
-    // The grid cell must resolve against the paper width: measure the same calc() on a probe element.
-    wait_for(webview,"(() => {const g=document.querySelector('.page-grid'),paper=document.getElementById('paper'),size=g.style.backgroundSize.split(' calc')[0],probe=document.createElement('div');probe.style.cssText=`position:absolute;width:${size}`;paper.append(probe);const cell=probe.getBoundingClientRect().width;probe.remove();return !g.hidden&&size.includes('cqw')&&Math.abs(cell-paper.clientWidth*5/210)<0.5;})()")?;
+    // The grid period must be 5 mm in container units and those units must resolve against the paper width.
+    // WebKit may serialize calc(100cqw * f) as calc(Ncqw ...), so accept both forms.
+    wait_for(webview,"(() => {const g=document.querySelector('.page-grid'),paper=document.getElementById('paper'),image=g.style.backgroundImage,long=/100cqw \\* ([\\d.]+)/.exec(image),short=/([\\d.]+)cqw/.exec(image);const units=long?100*Number(long[1]):short?Number(short[1]):NaN;const probe=document.createElement('div');probe.style.cssText=`position:absolute;width:${units}cqw`;paper.append(probe);const cell=probe.getBoundingClientRect().width;probe.remove();return !g.hidden&&image.startsWith('repeating-linear-gradient')&&Math.abs(units-100*5/210)<1e-3&&Math.abs(cell-paper.clientWidth*5/210)<0.5;})()")?;
     choose(2,"none")?;
     wait_for(webview,"document.querySelector('.page-grid').hidden")?;
     choose(2,"inherit")?;
@@ -347,6 +368,23 @@ fn library(webview:&Webview<Wry>,directory:&Path)->TestResult<()> {
     choose(0,"none")?;
     wait_for(webview,"document.querySelector('.page-grid').hidden")?;
     evaluate(webview,"document.getElementById('editor-dialog').close();true")?;
+    // Shapes: a rectangle, a circle from the shape menu and a snapped quadrant; each undoes as one step.
+    scroll(webview,0.0)?;
+    let before=stroke_total(webview)?;
+    action(webview,"shape")?;
+    wait_for(webview,"document.querySelector('#toolbar [data-action=shape]').getAttribute('aria-pressed')==='true'")?;
+    shape(webview,(300.0,300.0),(500.0,420.0))?;saved(webview,before+1)?;
+    action(webview,"shape")?;click(webview,"#editor-dialog [data-shape=circle]")?;
+    shape(webview,(700.0,400.0),(760.0,400.0))?;saved(webview,before+2)?;
+    action(webview,"snap")?;
+    action(webview,"shape")?;click(webview,"#editor-dialog [data-shape=quadrant]")?;
+    let path=shape(webview,(310.0,620.0),(520.0,480.0))?;saved(webview,before+4)?;
+    // Without a page grid, snapping uses 5 mm (1200 units = 210 mm): the origin lies on that grid.
+    if evaluate(webview,&format!("(() => {{const s=5*1200/210;return {}.startsWith(`M${{Math.round(310/s)*s}} ${{Math.round(620/s)*s}}L`);}})()",serde_json::to_string(&path)?))?!=true {
+        return Err(format!("Quadrant origin not snapped: {path}").into());
+    }
+    for count in [before+2,before+1,before] {action(webview,"undo")?;saved(webview,count)?;}
+    action(webview,"snap")?;action(webview,"pen")?;
     click(webview,"[aria-label='Notizbücher und Themen']")?;
     click(webview,"#drawer [aria-label='Notizbücher und Themen verwalten']")?;
     click(webview,"[aria-label='Meine Notizen umbenennen']")?;

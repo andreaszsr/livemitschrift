@@ -28,8 +28,11 @@ test('serializing round-trips and forgets deleted topics and pages', () => {
 test('spacing is millimetres on an A4-wide page and scales with the paper width', () => {
     assert.ok(Math.abs(gridSpacingUnits(5) - 5 * 1200 / 210) < 1e-9);
     assert.equal(gridBackground(off), null);
-    const css = gridBackground(squares);
-    assert.match(css.size, /^calc\(100cqw \* 0\.0238\d+\) calc/);
-    assert.equal(gridBackground({style: 'lines', spacing: 10}).size.startsWith('100% calc(100cqw'), true);
-    assert.match(gridBackground(dots).position, /\/ -2\)/);
+    // Repeating gradients over the whole layer (no tiles), period = spacing in container units.
+    const squares5 = gridBackground(squares)['background-image'];
+    assert.match(squares5, /^repeating-linear-gradient\(to right, #dbe2ec -0\.5px 0\.5px, transparent 0\.5px calc\(calc\(100cqw \* 0\.0238\d+\) - 0\.5px\)\), repeating-linear-gradient\(to bottom/);
+    assert.equal(gridBackground({style: 'lines', spacing: 10})['background-image'].includes('to right'), false);
+    const dotted = gridBackground(dots);
+    assert.match(dotted['mask-image'], /to right, #000 -1px 1px.*to bottom, #000 -1px 1px/);
+    assert.equal(dotted['mask-composite'], 'intersect');
 });
