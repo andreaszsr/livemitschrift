@@ -43,7 +43,7 @@ secret checks, a container vulnerability gate and a disposable 50-reader HTTPS
 installation test. `release.yml` reuses CI only after version/license preflight.
 
 A `vX.Y.Z` tag must match versions in root `package.json`, backend
-`pyproject.toml`, desktop `Cargo.toml` and `tauri.conf.json` (keep workspace versions
+`pyproject.toml` and `app/main.py`, desktop `Cargo.toml` and `tauri.conf.json` (keep workspace versions
 and package/Cargo locks consistent as well). Tagging a reviewed release commit starts two protected-environment jobs:
 
 - GHCR `ghcr.io/<owner>/<repository>:X.Y.Z`, lowercase package path, Linux AMD64

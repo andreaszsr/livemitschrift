@@ -24,7 +24,7 @@ to overwrite existing deployment files or a publisher key. Edit `.env`:
 ```dotenv
 DOMAIN=notes.example.org
 ACME_EMAIL=operator@example.org
-LIVEMITSCHRIFT_IMAGE=ghcr.io/andreaszsr/livemitschrift:0.1.0
+LIVEMITSCHRIFT_IMAGE=ghcr.io/andreaszsr/livemitschrift:0.2.0
 ```
 
 Use the actual published version or its immutable `@sha256:...` digest, or a
@@ -71,10 +71,10 @@ On the server (or any machine with the same CPU architecture), from a checkout o
 the release you want to run:
 
 ```sh
-docker build -t livemitschrift:0.1.0 .
+docker build -t livemitschrift:0.2.0 .
 ```
 
-Set `LIVEMITSCHRIFT_IMAGE=livemitschrift:0.1.0` in `.env` and skip
+Set `LIVEMITSCHRIFT_IMAGE=livemitschrift:0.2.0` in `.env` and skip
 `docker compose pull`. For updates, check out the new version, build with a new
 tag and change `.env` accordingly.
 
