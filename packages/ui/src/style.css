@@ -86,3 +86,15 @@ button.danger{color:#a33f45}button.primary.danger{background:#f8e3e4;color:#9335
 .notes-entry{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;padding:8px 10px;border:1px solid var(--line);border-radius:6px;font-size:13px}
 .notes-entry small{font-size:11px;color:var(--muted)}.notes-entry span{overflow-wrap:anywhere}
 .check-option{display:flex;align-items:center;gap:8px;font-size:13px}label.check-option input{display:inline-block;width:auto;margin:0}
+/* Desktop export dialog. */
+.export-folder { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.export-folder span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.export-form fieldset { margin: 12px 0; padding: 8px 10px; border: 1px solid #d7dee7; border-radius: 6px; }
+.export-form legend { font-size: 12px; padding: 0 4px; }
+label.export-choice { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+label.export-choice input[type=radio] { width: auto; margin: 0; }
+label.export-choice input[name=export-range] { flex: 1; margin: 0; }
+.export-message:empty { display: none; }
+/* Lecturer-only page grid: the paper is its size container, 100cqw = page width (1200 document units). */
+.paper{container-type:inline-size}.page-grid{position:absolute;inset:0;pointer-events:none}.page-grid[hidden]{display:none}
+.grid-fields{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 12px;padding:8px 10px;border:1px solid var(--line);border-radius:6px}.grid-fields legend{padding:0 4px;font-size:12px;color:var(--muted)}.grid-fields select{flex:1;min-width:120px}

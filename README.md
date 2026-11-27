@@ -38,6 +38,9 @@ or browse on their own, and they need no account or app.
   - Lasso to move, copy, cut, paste and delete strokes.
   - Laser pointer, which readers see too and which is never saved.
   - Undo and redo.
+- **Page grid.** Squares, lines or dots (4–10 mm) behind PDFs and ink, only for
+  the lecturer: readers and PDF exports never show it. A default per notebook
+  (asked when creating one), changeable per topic and per page.
 - **Lecture navigation.** ←/→ and Page Up/Down change pages, so presenter remotes
   and tablet ExpressKeys work. "Fit whole slide" zoom fits a slide to the screen.
 - **Writing bar.** The bar can be configured, floating or docked. A floating bar
@@ -139,7 +142,7 @@ Plain HTTP is accepted only on loopback. Remote servers require HTTPS.
 ## Using it
 
 - **Writing.** The writing bar has page navigation, undo/redo, pen, eraser,
-  highlighter, lasso, laser pointer and your color and width favorites.
+  highlighter, lasso, laser pointer, grid and your color and width favorites.
   Keyboard shortcuts: P pen, E eraser, H highlighter, S lasso, L laser,
   F fullscreen.
 - **Notebooks.** The drawer button opens notebooks and topics.
