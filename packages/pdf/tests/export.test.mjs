@@ -59,7 +59,7 @@ test('reader notes become PDF text annotations on the right slice, optionally wi
     const first=page(), second=page(); second.id='second';
     first.strokes=[stroke([[100,100,.5],[200,200,.5]])];
     const text='Ümlaut, Emoji 😀 und\nzweite Zeile';
-    const notes={printable:false, byPage:new Map([['page',[
+    const notes={comments:true, printable:false, byPage:new Map([['page',[
         {number:1,x:600,y:300,text,updated:Date.UTC(2026,10,26)},
         {number:2,x:120,y:EXPORT_SLICE_HEIGHT+50,text:'Weiter unten',updated:0}]]])};
     const comments=async bytes=>{
@@ -80,6 +80,9 @@ test('reader notes become PDF text annotations on the right slice, optionally wi
     assert.ok(Math.abs(x-(24+600*(595.28-48)/1200))<.01 && Math.abs(top-(841.89-24-300*(595.28-48)/1200))<.01);
     const printed=await PDFDocument.load(await exportTopicPdf({id:'t',title:'Notes',pages:[first,second]},async()=>{throw Error('no PDF');},{notes:{...notes,printable:true}}));
     assert.equal(printed.getPageCount(),4);
+    // Printable text alone, without comments: text page, no annotations.
+    const printOnly=await comments(await exportTopicPdf({id:'t',title:'Notes',pages:[first,second]},async()=>{throw Error('no PDF');},{notes:{...notes,comments:false,printable:true}}));
+    assert.deepEqual(printOnly,[[],[],[],[]]);
     const without=await PDFDocument.load(await exportTopicPdf({id:'t',title:'Notes',pages:[first,second]},async()=>{throw Error('no PDF');}));
     assert.equal(without.getPageCount(),2);
 });

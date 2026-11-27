@@ -8,6 +8,7 @@ import type { ViewerState } from './viewer-state.js';
 import { followScrollTop } from './follow-position.js';
 import {exportFilename, loadExportTopic} from './topic-export.js';
 import { mergeNotes, NoteStore, pageNotes, parseNotes, serializeNotes } from './student-notes.js';
+import type { StudentNote } from './student-notes.js';
 import type { NoteStorage } from './student-notes.js';
 import { NotesLayer } from './notes-layer.js';
 function element<T extends HTMLElement>(id: string): T { const node = document.getElementById(id); if (!node)
@@ -35,16 +36,20 @@ const privacyUrl = (() => { const value = document.querySelector<HTMLMetaElement
 const sourceUrl = (() => { const value = document.querySelector<HTMLMetaElement>('meta[name=livemitschrift-source]')?.content ?? '';
     try { const url = new URL(value); return url.protocol === 'https:' ? url.href : null; } catch { return null; } })();
 const fullscreenAvailable = document.fullscreenEnabled && typeof document.documentElement.requestFullscreen === 'function';
-const toolbar = new Toolbar(element('toolbar'), [...(fullscreenAvailable ? ['fullscreen'] : []), 'note', 'export', 'zoom', 'zoom-lock', 'placement'], false, () => { persist(); update(); });
+const toolbar = new Toolbar(element('toolbar'), [...(fullscreenAvailable ? ['fullscreen'] : []), 'note', 'notes', 'export', 'zoom', 'zoom-lock', 'placement'], false, () => { persist(); update(); });
 let exportController: AbortController | null = null, exportUrl: string | null = null;
 // Export is offered on existing layouts too, preserving the user's action order.
 if (saved.exportActionAdded !== true && saved.toolbar && typeof saved.toolbar === 'object') {
     const layout = saved.toolbar as {pinned?: unknown};
     if (Array.isArray(layout.pinned) && !layout.pinned.includes('export')) layout.pinned.unshift('export');
 }
-if (saved.notesActionAdded !== true && saved.toolbar && typeof saved.toolbar === 'object') {
+// Notes: "Notiz setzen" first, the overview right after it.
+if (saved.notesActionsAdded !== true && saved.toolbar && typeof saved.toolbar === 'object') {
     const layout = saved.toolbar as {pinned?: unknown};
-    if (Array.isArray(layout.pinned) && !layout.pinned.includes('note')) layout.pinned.unshift('note');
+    if (Array.isArray(layout.pinned)) {
+        if (!layout.pinned.includes('note')) layout.pinned.unshift('note');
+        if (!layout.pinned.includes('notes')) layout.pinned.splice(layout.pinned.indexOf('note') + 1, 0, 'notes');
+    }
 }
 if (saved.fullscreenActionAdded !== true && fullscreenAvailable && saved.toolbar && typeof saved.toolbar === 'object') {
     const layout = saved.toolbar as {pinned?: unknown};
@@ -88,7 +93,7 @@ const phone = matchMedia('(pointer: coarse) and (max-width: 950px)').matches;
 zoom.configure(phone && saved.phoneZoomDefault !== true ? {value: 'page', locked: false} : saved.zoom);
 toolbar.configure(addZoomLockAction(saved.toolbar, saved.zoom));
 function persist(): void { try {
-    localStorage.setItem(storageKey, JSON.stringify({ toolbar: toolbar.preferences, exportActionAdded: true, fullscreenActionAdded: true, notesActionAdded: true, notesHintShown, phoneZoomDefault: true, follow, pageId: current?.id ?? saved.pageId, positions, zoom: zoom.preferences }));
+    localStorage.setItem(storageKey, JSON.stringify({ toolbar: toolbar.preferences, exportActionAdded: true, fullscreenActionAdded: true, notesActionsAdded: true, notesHintShown, phoneZoomDefault: true, follow, pageId: current?.id ?? saved.pageId, positions, zoom: zoom.preferences }));
 }
 catch { /* Optional per-browser preferences do not gate live viewing. */ } }
 function notice(message: string): void { element('notice-text').textContent = message; element('notice').hidden = false; }
@@ -238,7 +243,8 @@ async function exportPdf(): Promise<void> {
         element<HTMLInputElement>('export-notes-print').checked = false;
         element<HTMLButtonElement>('export-start').onclick = () => {
             options.hidden = true;
-            void buildPdf(topic, element<HTMLInputElement>('export-notes').checked ? {byPage, printable: element<HTMLInputElement>('export-notes-print').checked} : undefined);
+            const comments = element<HTMLInputElement>('export-notes').checked, printable = element<HTMLInputElement>('export-notes-print').checked;
+            void buildPdf(topic, comments || printable ? {byPage, comments, printable} : undefined);
         };
         view.showModal();
         return;
@@ -296,23 +302,42 @@ function notesDialog(): void {
     list.className = 'notes-list';
     const intro = document.createElement('p');
     intro.textContent = all.length ? 'Nur in diesem Browser gespeichert. Sichere sie als Datei, um sie auf ein anderes Gerät mitzunehmen.' : 'Noch keine Notizen. Mit „Notiz setzen“ auf eine Stelle der Seite tippen.';
-    const entry = (label: string, text: string, open: (() => void) | null): HTMLElement => {
-        const node = document.createElement(open ? 'button' : 'div');
+    const entry = (note: StudentNote, label: string, open: (() => void) | null): HTMLElement => {
+        const row = document.createElement('div'), node = document.createElement(open ? 'button' : 'div');
+        row.className = 'notes-row';
         node.className = 'notes-entry';
         const caption = document.createElement('small'), body = document.createElement('span');
-        caption.textContent = label; body.textContent = [...text].slice(0, 140).join('');
+        caption.textContent = label; body.textContent = [...note.text].slice(0, 140).join('');
         node.append(caption, body);
         if (open && node instanceof HTMLButtonElement) { node.type = 'button'; node.title = `${label} öffnen. Eigene Navigation pausiert Follow.`; node.addEventListener('click', open); }
-        return node;
+        row.append(node, deleteButton(note, row));
+        return row;
+    };
+    // Deleting asks once inline: the first tap arms the button, the second deletes.
+    const deleteButton = (note: StudentNote, row: HTMLElement): HTMLButtonElement => {
+        const button = document.createElement('button');
+        button.type = 'button'; button.className = 'notes-delete'; button.textContent = 'Löschen';
+        button.title = 'Diese Notiz aus diesem Browser löschen. Zum Bestätigen ein zweites Mal tippen.';
+        button.addEventListener('click', () => {
+            if (button.dataset.armed !== 'true') {
+                button.dataset.armed = 'true'; button.textContent = 'Wirklich löschen?';
+                return;
+            }
+            try { notes.remove(note.id); } catch (error) { notice(`Notiz konnte nicht gelöscht werden: ${String(error)}`); return; }
+            row.remove();
+            notesLayer.render(current); update();
+            backup.disabled = !notes.all.length;
+        });
+        return button;
     };
     const known = new Set<string>();
     for (const topic of notebook.topics) for (const [index, page] of topic.pages.entries()) {
         known.add(page.id);
         for (const {note, number} of pageNotes(all, page.id))
-            list.append(entry(`${topic.title} · Seite ${index + 1} · Notiz ${number}`, note.text, () => { view.close(); choosePage(page); notesLayer.show(note, number); }));
+            list.append(entry(note, `${topic.title} · Seite ${index + 1} · Notiz ${number}`, () => { view.close(); choosePage(page); notesLayer.show(note, number); }));
     }
     const orphaned = all.filter(note => !known.has(note.pageId));
-    for (const note of orphaned) list.append(entry('Entfernte Seite', note.text, null));
+    for (const note of orphaned) list.append(entry(note, 'Entfernte Seite', null));
     const actions = document.createElement('div'), backup = document.createElement('button'), load = document.createElement('button'), file = document.createElement('input');
     actions.className = 'dialog-actions';
     backup.type = 'button'; backup.textContent = 'Notizen speichern'; backup.title = 'Alle Notizen dieses Notizbuchs als Datei herunterladen.'; backup.disabled = !all.length;

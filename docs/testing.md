@@ -155,7 +155,8 @@ Button names are quoted as they appear in the German UI.
   the PDF backgrounds and the confirmed ink.
 - **Private notes (phone and laptop).** "Notiz setzen", then a tap places a
   note at that spot; a swipe still changes pages. Markers stay in place when
-  zooming. Notes survive a reload, "Meine Notizen" lists them and saves/loads
-  a file. The topic export offers them as PDF comments; open the PDF in
+  zooming. Notes survive a reload; "Meine Notizen" (next to "Notiz setzen")
+  lists them, deletes after a second tap and saves/loads a file. The topic export offers them as PDF comments; open the PDF in
   Preview and on an iPad and check position and text (also umlauts and emoji).
-  With "Zusätzlich als Text zum Drucken", markers and text pages appear.
+  With "Ergänze meine Notizen als Text zum Drucken", footnote-style numbers and
+  text pages appear, also with comments switched off.

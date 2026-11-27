@@ -82,6 +82,7 @@ button.danger{color:#a33f45}button.primary.danger{background:#f8e3e4;color:#9335
 .note-text{white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px;color:inherit}
 #viewer-dialog textarea{display:block;width:100%;box-sizing:border-box;font:inherit;font-size:14px;padding:9px;border:1px solid var(--line);border-radius:6px;resize:vertical}
 .notes-list{display:flex;flex-direction:column;gap:6px;max-height:50vh;overflow:auto}
+.notes-row{display:flex;gap:6px;align-items:stretch}.notes-row .notes-entry{flex:1;min-width:0}.notes-delete{flex:none;font-size:12px}.notes-delete[data-armed=true]{background:#f8e3e4;color:#93353b}
 .notes-entry{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;padding:8px 10px;border:1px solid var(--line);border-radius:6px;font-size:13px}
 .notes-entry small{font-size:11px;color:var(--muted)}.notes-entry span{overflow-wrap:anywhere}
 .check-option{display:flex;align-items:center;gap:8px;font-size:13px}label.check-option input{display:inline-block;width:auto;margin:0}

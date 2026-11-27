@@ -85,8 +85,8 @@ system does not support collaborative editing.
    notebook link, and in files the reader saves; the notes code never uses the
    network. Notes on pages the lecturer deleted are kept and listed separately.
    The reader's PDF export can add them as standard PDF Text annotations
-   (UTF-16 contents) on the A4 slice of their position, and optionally as
-   numbered markers plus a printable text page per notebook page.
+   (UTF-16 contents) on the A4 slice of their position and, independently,
+   as footnote-style numbers plus a printable text page per notebook page.
 
 ### Server
 

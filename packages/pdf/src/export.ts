@@ -21,7 +21,9 @@ export function exportContentHeight(page: NotePage): number {
 export interface ExportNote { number: number; x: number; y: number; text: string; updated: number }
 export interface ExportNotes {
     byPage: Map<string, ExportNote[]>;
-    /** Also draw numbered markers and list the texts after each page, since comments rarely print. */
+    /** Add each note as a PDF comment (text annotation) at its position. */
+    comments: boolean;
+    /** Draw numbered markers and list the texts after each page, since comments rarely print. */
     printable: boolean;
 }
 
@@ -34,7 +36,9 @@ export function exportPlacement(x: number, y: number): {slice: number; x: number
     return {slice, x: MARGIN + x * SCALE, y: A4[1] - MARGIN - (y - slice * EXPORT_SLICE_HEIGHT) * SCALE};
 }
 
-const NOTE_ICON = 18, NOTE_COLOR = rgb(1, .85, .3), NOTE_TEXT = rgb(.29, .23, 0);
+const NOTE_ICON = 18;
+/** Printed note references look like footnote numbers, not like sticky-note comments. */
+const NOTE_REFERENCE = rgb(.12, .33, .64), WHITE = rgb(1, 1, 1);
 
 /** A standard Text annotation (sticky note); UTF-16 contents keep every character. */
 function addNoteComment(result: PDFDocument, target: PDFPage, note: ExportNote): void {
@@ -49,9 +53,12 @@ function addNoteComment(result: PDFDocument, target: PDFPage, note: ExportNote):
 }
 
 function drawNoteMarker(target: PDFPage, font: PDFFont, note: ExportNote): void {
-    const place = exportPlacement(note.x, note.y), label = String(note.number), size = 8;
-    target.drawCircle({x: place.x, y: place.y, size: 7, color: NOTE_COLOR, borderColor: NOTE_TEXT, borderWidth: .5});
-    target.drawText(label, {x: place.x - font.widthOfTextAtSize(label, size) / 2, y: place.y - size * .35, size, font, color: NOTE_TEXT});
+    // A superscript number just above and right of the note position; a light
+    // backing keeps it legible on ink and slides.
+    const place = exportPlacement(note.x, note.y), label = String(note.number), size = 7;
+    const width = font.widthOfTextAtSize(label, size), x = place.x + 1, y = place.y + 2;
+    target.drawRectangle({x: x - 1, y: y - 1.5, width: width + 2, height: size + 1, color: WHITE, opacity: .8});
+    target.drawText(label, {x, y, size, font, color: NOTE_REFERENCE});
 }
 
 /** The standard font only covers WinAnsi; other characters print as "?" on the text pages. */
@@ -89,7 +96,7 @@ function addNoteText(result: PDFDocument, font: PDFFont, bold: PDFFont, title: s
         const lines = wrap(font, printable(font, note.text), size, width);
         for (const [index, line] of lines.entries()) {
             if (y < MARGIN + leading) { target = result.addPage([...A4]); y = A4[1] - MARGIN - 16; }
-            if (index === 0) target.drawText(`${note.number}.`, {x: MARGIN, y, size, font: bold});
+            if (index === 0) target.drawText(`${note.number}.`, {x: MARGIN, y, size, font: bold, color: NOTE_REFERENCE});
             target.drawText(line, {x: MARGIN + 24, y, size, font});
             y -= leading;
         }
@@ -174,7 +181,7 @@ export async function exportTopicPdf(topic: Topic, readAsset: (id: string, pageN
             for (const note of pageNotes) {
                 if (exportPlacement(note.x, note.y).slice !== slice) continue;
                 if (fonts) drawNoteMarker(target, fonts.bold, note);
-                addNoteComment(result, target, note);
+                if (options.notes?.comments) addNoteComment(result, target, note);
             }
         }
         if (fonts && pageNotes.length) addNoteText(result, fonts.regular, fonts.bold, `${topic.title} · Notizen zu Seite ${pageIndex + 1}`, pageNotes);

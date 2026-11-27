@@ -172,12 +172,31 @@ def main():
                     comments=[annotation.get_object() for annotation in PdfReader(noted).pages[0].get('/Annots', [])]
                     assert [(c['/Subtype'], c['/Contents']) for c in comments]==[('/Text', NOTE)], comments
                     browser.evaluate("document.getElementById('export-close').click();true")
+                    # Printable text alone (comments off) still lists the note on an extra page.
+                    browser.evaluate("document.querySelector('#toolbar [data-action=export]').click();true")
+                    browser.wait("!document.getElementById('export-options').hidden")
+                    browser.evaluate("window.__exportBlob=null;document.getElementById('export-notes').checked=false;document.getElementById('export-notes-print').checked=true;document.getElementById('export-start').click();true")
+                    browser.wait("!document.getElementById('export-download').hidden&&!!window.__exportBlob")
+                    encoded=browser.evaluate("window.__exportBlob.arrayBuffer().then(b=>{let s='';for(const c of new Uint8Array(b))s+=String.fromCharCode(c);return btoa(s);})")
+                    printed=ROOT/'output/pdf/student-notes-print.pdf'; printed.write_bytes(base64.b64decode(encoded))
+                    reader=PdfReader(printed)
+                    assert len(reader.pages)==5 and 'Privatnotiz-7f3a' in reader.pages[3].extract_text(), [page.extract_text()[:80] for page in reader.pages]
+                    assert not any(page.get('/Annots') for page in reader.pages), 'Comments were exported although switched off.'
+                    browser.evaluate("document.getElementById('export-close').click();true")
                     sent=[json.dumps(event['params']) for event in browser.events if event['method'] in ('Network.requestWillBeSent','Network.webSocketFrameSent')]
                     assert not any('Privatnotiz-7f3a' in item for item in sent), 'A note left the browser during export.'
+                    # The overview sits next to "Notiz setzen" and deletes after an inline confirmation.
+                    browser.evaluate("document.querySelector('#toolbar [data-action=notes]').click();true")
+                    browser.wait("document.getElementById('viewer-dialog').open&&document.querySelectorAll('.notes-row').length===1")
+                    browser.evaluate("document.querySelector('.notes-delete').click();true")
+                    assert browser.evaluate("document.querySelectorAll('.notes-row').length===1&&document.querySelector('.notes-delete').dataset.armed==='true'")
+                    browser.evaluate("document.querySelector('.notes-delete').click();true")
+                    browser.wait("document.querySelectorAll('.notes-row').length===0&&!document.querySelector('.note-marker')")
+                    browser.evaluate("document.getElementById('viewer-dialog').close();true")
                     assert 'Privatnotiz-7f3a' not in (directory/'server.log').read_text()
                     destination=ROOT/'output/pdf/student-browser-export.pdf'; destination.parent.mkdir(parents=True,exist_ok=True)
                     shutil.copyfile(file,destination)
-                    print('BROWSER_EXPORT_PASS actual four-page Chrome download, both PDF slides and long ink, unchanged navigation/Follow, no writer credentials; private note survives reload with a safe link, exports as a PDF comment and never reaches the network; instructor disconnected.')
+                    print('BROWSER_EXPORT_PASS actual four-page Chrome download, both PDF slides and long ink, unchanged navigation/Follow, no writer credentials; private note survives reload with a safe link, exports as a PDF comment, never reaches the network and is deleted from the overview; instructor disconnected.')
             finally:
                 stop(chrome); stop(server)
 
