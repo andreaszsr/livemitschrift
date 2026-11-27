@@ -29,9 +29,9 @@ test('the default range starts after the previous export and ends at the visible
 
 test('default file names use notebook, topic and the local date, without unsafe characters', () => {
   const date = new Date(2026, 10, 26, 23, 30);
-  assert.equal(exportFileName('Mathe 1', 'Kapitel 3', date), 'Mathe 1_Kapitel 3-2026-11-26');
-  assert.equal(exportFileName('A/B: C?', '..Thema\n2', date), 'A-B- C-_Thema-2-2026-11-26');
-  assert.equal(exportFileName('', '???', date), 'Notizbuch_----2026-11-26');
+  assert.equal(exportFileName('Mathe 1', 'Kapitel 3', date), '2026-11-26_Kapitel 3_Mathe 1');
+  assert.equal(exportFileName('A/B: C?', '..Thema\n2', date), '2026-11-26_Thema-2_A-B- C-');
+  assert.equal(exportFileName('', '???', date), '2026-11-26_---_Notizbuch');
 });
 
 test('user file names drop ".pdf" and reject paths and hidden names', () => {
