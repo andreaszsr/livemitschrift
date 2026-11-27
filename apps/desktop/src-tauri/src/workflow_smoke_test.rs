@@ -337,7 +337,7 @@ fn library(webview:&Webview<Wry>,directory:&Path)->TestResult<()> {
     local(webview,directory)?;
     // Export dialog: default name and range, remembered folder, all pages, then replace on a second export.
     action(webview,"export")?;
-    wait_for(webview,"/^Meine Notizen_.+-\\d{4}-\\d{2}-\\d{2}$/.test(document.querySelector('#editor-dialog [name=export-name]')?.value)&&document.querySelector('#editor-dialog [name=export-range]').value==='1'&&document.querySelector('#editor-dialog [value=range]').checked")?;
+    wait_for(webview,"/^\\d{4}-\\d{2}-\\d{2}_.+_Meine Notizen$/.test(document.querySelector('#editor-dialog [name=export-name]')?.value)&&document.querySelector('#editor-dialog [name=export-range]').value==='1'&&document.querySelector('#editor-dialog [value=range]').checked")?;
     evaluate(webview,"(() => {const f=document.querySelector('.export-form');f.querySelector('[name=export-name]').value='export';f.querySelector('[name=export-range]').value='9';f.requestSubmit();return true;})()")?;
     wait_for(webview,"document.querySelector('.export-message').textContent.startsWith('Ungültiger Bereich')")?;
     evaluate(webview,"(() => {const f=document.querySelector('.export-form');f.querySelector('[value=all]').checked=true;f.requestSubmit();return true;})()")?;

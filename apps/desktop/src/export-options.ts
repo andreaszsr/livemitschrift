@@ -48,10 +48,13 @@ function namePart(text: string): string {
     return text.replace(new RegExp(UNSAFE, 'g'), '-').replace(/\s+/g, ' ').trim().replace(/^\.+/, '');
 }
 
-/** Default file name (without ".pdf"): notebook_topic-YYYY-MM-DD in local time. */
+/**
+ * Default file name (without ".pdf"): YYYY-MM-DD_topic_notebook in local time.
+ * The date comes first so exports sort chronologically in a folder.
+ */
 export function exportFileName(notebook: string, topic: string, date: Date): string {
     const day = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-    return [...`${namePart(notebook) || 'Notizbuch'}_${namePart(topic) || 'Thema'}-${day}`].slice(0, 200).join('');
+    return [...`${day}_${namePart(topic) || 'Thema'}_${namePart(notebook) || 'Notizbuch'}`].slice(0, 200).join('');
 }
 
 /** A user-entered file name without ".pdf", or null if it cannot be used as is. */

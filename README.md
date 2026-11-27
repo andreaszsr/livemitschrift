@@ -51,7 +51,8 @@ or browse on their own, and they need no account or app.
 - **Organizing.** Notebooks and topics can be renamed and deleted, also by
   right-click. Topics are reordered by dragging.
 - **Export and backup.** PDF export of a topic into a remembered folder per
-  notebook (for example a Nextcloud folder). The page range defaults to the
+  notebook (for example a Nextcloud folder), named `YYYY-MM-DD_topic_notebook`
+  by default so files sort by date. The page range defaults to the
   pages written since the previous export. Portable `.livemitschrift` backups.
 
 ### Sharing
