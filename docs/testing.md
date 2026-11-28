@@ -126,6 +126,11 @@ Button names are quoted as they appear in the German UI.
 - **Highlighter (H).** The highlighter is translucent and has constant width. No
   darker dots appear after lifting the pen. It appears translucent in the PDF
   export and in thumbnails.
+- **Images.** Insert a screenshot with ⌘V, a Finder drop and a file from the
+  tools panel (also an iPhone HEIC photo); each lands under the pointer. A lasso
+  tap selects an image; moving, corner resizing, ⌘C/⌘V, ⌫ and undo work, and
+  writing on an image never moves it. With sharing on, readers see the image
+  after a moment; reader and desktop PDF exports include it.
 - **Lasso (S).** Select strokes by circling them and drag the selection. ⌘C, ⌘X
   and ⌘V work, also onto another page. Delete removes the selection. Undo
   reverts each step. Readers see the result.

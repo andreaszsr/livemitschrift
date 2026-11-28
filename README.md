@@ -39,6 +39,11 @@ or browse on their own, and they need no account or app.
     (one quadrant or an axis cross) with ticks at the grid spacing. "Am Raster
     einrasten" snaps shapes and straight lines to the grid (5 mm without one).
   - Lasso to move, copy, cut, paste and delete strokes.
+  - Images: insert from a file, with ⌘V (for example a screenshot) or by
+    dragging from the Finder; they land under the pointer. A lasso tap selects
+    an image to move, resize at its corners, copy or delete. Readers see the
+    images, and PDF exports include them. Images are downscaled to 2400 px and
+    re-encoded, which drops camera and location metadata.
   - Laser pointer, which readers see too and which is never saved.
   - Undo and redo.
 - **Page grid.** Squares, lines or dots (4–10 mm) behind PDFs and ink, only for
@@ -152,8 +157,8 @@ Plain HTTP is accepted only on loopback. Remote servers require HTTPS.
   F fullscreen.
 - **Notebooks.** The drawer button opens notebooks and topics. The app reopens
   where you left off; notebooks and topics continue on the page viewed last.
-- **Lecture tools.** The panel button opens PDF import, new topic, zoom, sharing,
-  QR code and export.
+- **Lecture tools.** The panel button opens PDF import, image insertion, new
+  topic, zoom, sharing, QR code and export.
 - **Settings.** "Einstellungen …" holds backups, notebook management, colors and
   widths, the toolbar layout and a pen test.
 - **Help.** Hover over any control for a short explanation.
