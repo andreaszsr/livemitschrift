@@ -6,6 +6,12 @@ MAX_PDF_BYTES = 50_000_000
 # Per-notebook PDF budget: one notebook usually holds a whole semester.
 MAX_NOTEBOOK_ASSETS = 128
 MAX_NOTEBOOK_ASSET_BYTES = 500_000_000
+# Images are downscaled by the desktop app; their budget is separate from PDFs.
+MAX_IMAGE_BYTES = 10_000_000
+MAX_IMAGE_SIDE = 4096
+MAX_NOTEBOOK_IMAGES = 2000
+MAX_NOTEBOOK_IMAGE_BYTES = 500_000_000
+MAX_PAGE_IMAGES = 50
 SESSION_PATTERN = r"[a-f0-9]{64}"
 
 class MessageModel(BaseModel):
