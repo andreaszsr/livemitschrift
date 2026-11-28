@@ -36,3 +36,4 @@ deploy/backups/
 *.p12
 *.pfx
 .vscode/
+.font-tools/

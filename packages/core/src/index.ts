@@ -16,3 +16,6 @@ export * from "./straight-line.js";
 export * from "./shapes.js";
 export * from "./images.js";
 export * from "./texts.js";
+export * from "./text-layout.js";
+export type { FontMetrics } from "./text-metrics.js";
+export { MONO_METRICS, SANS_METRICS } from "./text-metrics.js";
