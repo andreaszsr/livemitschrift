@@ -9,7 +9,7 @@ use std::{
 };
 
 pub type StorageResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
-/// 1: release 0.1/0.2; 2: adds `images` (release 0.3).
+/// 1: release 0.1/0.2; 2: adds `images` and `texts` (release 0.3).
 const SCHEMA_VERSION: i64 = 2;
 pub const DOCUMENT_ID: &str = "local-document";
 pub const PAGE_ID: &str = "local-page";
@@ -106,7 +106,9 @@ impl Database {
         } else if version == 1 {
             // Additive step: existing notebooks, outbox and acknowledgements stay untouched.
             transaction.execute_batch("CREATE TABLE IF NOT EXISTS images(id TEXT PRIMARY KEY,page_id TEXT NOT NULL REFERENCES pages(id),position INTEGER NOT NULL CHECK(position>=0),data TEXT NOT NULL);
-                CREATE INDEX IF NOT EXISTS image_page ON images(page_id);")?;
+                CREATE INDEX IF NOT EXISTS image_page ON images(page_id);
+                CREATE TABLE IF NOT EXISTS texts(id TEXT PRIMARY KEY,page_id TEXT NOT NULL REFERENCES pages(id),position INTEGER NOT NULL CHECK(position>=0),data TEXT NOT NULL);
+                CREATE INDEX IF NOT EXISTS text_page ON texts(page_id);")?;
         } else if version != SCHEMA_VERSION {
             return Err(format!("Unsupported database version {version}; this release supports up to {SCHEMA_VERSION}. Please update LiveMitschrift.").into());
         }

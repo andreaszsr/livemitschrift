@@ -91,6 +91,24 @@ ignored. It refuses:
 Its `--export <empty-directory>` option creates a source copy you can review or
 scan for secrets a second time.
 
+## Text box fonts
+
+Text boxes use "LiveMitschrift Sans" and "LiveMitschrift Mono" in the app, the
+reader view and PDF exports (`packages/ui/src/fonts/`, SIL OFL 1.1). They are
+subsets of Noto Sans and Noto Sans Mono with arrows and mathematical operators
+from Noto Sans Mono and Noto Sans Math. `packages/core/src/text-metrics.ts`
+holds their advance widths; the shared line breaking uses only this table, and
+renderers draw the resulting lines without kerning or ligatures, so text wraps
+identically everywhere. PDF exports embed the fonts with `@pdf-lib/fontkit`
+1.1.1 (MIT).
+
+To rebuild fonts and table (sources are pinned by SHA-256):
+
+```sh
+python3.14 -m venv .font-tools && .font-tools/bin/pip install fonttools==4.60.1
+.font-tools/bin/python scripts/build_text_fonts.py
+```
+
 ## Python dependencies
 
 `python3 scripts/lock_backend.py` checks that `backend/requirements.lock` matches

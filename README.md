@@ -38,6 +38,12 @@ or browse on their own, and they need no account or app.
   - Shapes: rectangle, circle (dragged from the centre), coordinate system
     (one quadrant or an axis cross) with ticks at the grid spacing. "Am Raster
     einrasten" snaps shapes and straight lines to the grid (5 mm without one).
+  - Text boxes (T): typed text in three sizes in the pen colour, optionally as
+    code (monospace, whitespace kept). Lines break only at spaces, identically
+    in the app, the reader view and PDF exports. https and mailto links are
+    clickable for readers and in PDFs; in the app a selected box opens them.
+    The lasso moves a box, changes its width, edits it (double tap or Enter),
+    copies or deletes it.
   - Lasso to move, copy, cut, paste and delete strokes.
   - Images: insert from a file, with ⌘V (for example a screenshot) or by
     dragging from the Finder; they land under the pointer. A lasso tap selects
@@ -151,9 +157,9 @@ Plain HTTP is accepted only on loopback. Remote servers require HTTPS.
 ## Using it
 
 - **Writing.** The writing bar has page navigation, undo/redo, pen, eraser,
-  highlighter, lasso, laser pointer, grid, shapes, snapping and your color and
-  width favorites.
-  Keyboard shortcuts: P pen, E eraser, H highlighter, S lasso, L laser,
+  highlighter, lasso, laser pointer, grid, text, shapes, snapping and your color
+  and width favorites.
+  Keyboard shortcuts: P pen, E eraser, H highlighter, S lasso, T text, L laser,
   F fullscreen.
 - **Notebooks.** The drawer button opens notebooks and topics. The app reopens
   where you left off; notebooks and topics continue on the page viewed last.

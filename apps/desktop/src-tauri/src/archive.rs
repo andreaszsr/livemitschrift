@@ -1,5 +1,5 @@
 //! Portable, versioned ZIP backups. Import always creates a separate notebook.
-use super::notebooks::{identity, new_id, random_hex, title, validate_image, validate_notebook_background, MAX_PAGE_IMAGES};
+use super::notebooks::{identity, new_id, random_hex, title, validate_image, validate_notebook_background, validate_text, MAX_PAGE_IMAGES, MAX_PAGE_TEXTS};
 use super::*;
 use std::{
     collections::HashSet,
@@ -15,12 +15,12 @@ const MAX_MANIFEST: u64 = 16_000_000;
 const MAX_NOTEBOOK_IMAGE_BYTES: usize = 500_000_000;
 /// Manifest plus all PDFs and images; ZIP entries are stored uncompressed.
 pub const MAX_ARCHIVE: u64 = MAX_MANIFEST + MAX_NOTEBOOK_PDF_BYTES as u64 + MAX_NOTEBOOK_IMAGE_BYTES as u64 + 4_000_000;
-/// Version 1 has no images; it is still written for notebooks without images,
-/// so such backups stay readable by older releases.
-const VERSION_WITH_IMAGES: u32 = 2;
+/// Version 1 has no images or text boxes; it is still written for notebooks
+/// without them, so such backups stay readable by older releases.
+const VERSION_WITH_OBJECTS: u32 = 2;
 
-/// Content-addressed resources referenced by a notebook.
-struct Assets { pdfs: HashSet<String>, images: HashSet<String> }
+/// Content-addressed resources referenced by a notebook, and whether it has text boxes.
+struct Assets { pdfs: HashSet<String>, images: HashSet<String>, texts: bool }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Manifest {
@@ -34,6 +34,7 @@ fn validate(notebook: &Notebook) -> StorageResult<Assets> {
     let mut ids = HashSet::new();
     let mut assets = HashSet::new();
     let mut images = HashSet::new();
+    let mut texts = false;
     let mut pages = 0;
     let mut points = 0;
     if notebook.topics.is_empty() || notebook.topics.len() > 1000 {
@@ -94,6 +95,16 @@ fn validate(notebook: &Notebook) -> StorageResult<Assets> {
                 }
                 images.insert(image.asset_id.clone());
             }
+            if page.texts.len() > MAX_PAGE_TEXTS {
+                return Err("Too many text boxes on a backup page.".into());
+            }
+            for text in &page.texts {
+                validate_text(text, &PageSize { width: page.width, height: page.height })?;
+                if !ids.insert(text.id.clone()) || text.order >= page.next_order {
+                    return Err("Invalid backup text box identity/order.".into());
+                }
+                texts = true;
+            }
         }
     }
     if assets.len() > MAX_NOTEBOOK_PDFS {
@@ -102,7 +113,7 @@ fn validate(notebook: &Notebook) -> StorageResult<Assets> {
     if images.len() > MAX_NOTEBOOK_IMAGES {
         return Err(format!("Backup exceeds image limit ({MAX_NOTEBOOK_IMAGES}).").into());
     }
-    Ok(Assets { pdfs: assets, images })
+    Ok(Assets { pdfs: assets, images, texts })
 }
 
 impl Database {
@@ -111,7 +122,7 @@ impl Database {
         let assets = validate(&notebook)?;
         let manifest = serde_json::to_vec(&Manifest {
             format: "LiveMitschrift".into(),
-            version: if assets.images.is_empty() { 1 } else { VERSION_WITH_IMAGES },
+            version: if assets.images.is_empty() && !assets.texts { 1 } else { VERSION_WITH_OBJECTS },
             notebook,
         })?;
         if manifest.len() as u64 > MAX_MANIFEST {
@@ -179,12 +190,12 @@ impl Database {
             version,
             mut notebook,
         } = serde_json::from_slice(&data)?;
-        if format != "LiveMitschrift" || !(1..=VERSION_WITH_IMAGES).contains(&version) {
+        if format != "LiveMitschrift" || !(1..=VERSION_WITH_OBJECTS).contains(&version) {
             return Err("Unsupported LiveMitschrift backup version.".into());
         }
-        let Assets { pdfs: assets, images } = validate(&notebook)?;
-        if version == 1 && !images.is_empty() {
-            return Err("Backup version 1 cannot contain images.".into());
+        let Assets { pdfs: assets, images, texts } = validate(&notebook)?;
+        if version == 1 && (!images.is_empty() || texts) {
+            return Err("Backup version 1 cannot contain images or text boxes.".into());
         }
         let expected: HashSet<_> = std::iter::once("notebook.json".to_owned())
             .chain(assets.iter().map(|id| format!("pdf/{id}.pdf")))
@@ -256,6 +267,10 @@ impl Database {
                 for image in &mut page.images {
                     image.id = new_id("image")?;
                     tx.execute("INSERT INTO images VALUES(?1,?2,?3,?4)", params![image.id, page.id, image.order, serde_json::to_string(image)?])?;
+                }
+                for text in &mut page.texts {
+                    text.id = new_id("text")?;
+                    tx.execute("INSERT INTO texts VALUES(?1,?2,?3,?4)", params![text.id, page.id, text.order, serde_json::to_string(text)?])?;
                 }
             }
         }

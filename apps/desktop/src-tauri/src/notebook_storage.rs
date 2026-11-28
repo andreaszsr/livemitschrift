@@ -7,6 +7,18 @@ pub const MAX_PAGE_IMAGES: usize = 50;
 /// Smallest placed side in document units (matches packages/core).
 const MIN_IMAGE_SIZE: f64 = 12.0;
 
+pub const MAX_PAGE_TEXTS: usize = 50;
+const MAX_TEXT_LENGTH: usize = 5000;
+const MIN_TEXT_WIDTH: f64 = 60.0;
+
+/// A typed text box; its height follows from the text layout and is not stored.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PageText {
+    pub id: String, pub x: f64, pub y: f64, pub width: f64, pub text: String,
+    pub size: String, pub color: String, pub code: bool, pub order: i64,
+}
+
 /// An image placed on a page; the bytes are a content-addressed local asset.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -35,6 +47,8 @@ pub struct NotePage {
     /// Omitted when empty, so pages without images keep their previous JSON form.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<PageImage>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub texts: Vec<PageText>,
     pub next_order: i64,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -52,6 +66,10 @@ pub struct PageEdit {
     pub insert_images: Vec<PageImage>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub remove_images: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub insert_texts: Vec<PageText>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remove_texts: Vec<String>,
     pub height: f64,
 }
 
@@ -128,7 +146,8 @@ impl Database {
     pub fn edit_page(&mut self, edit: &PageEdit) -> StorageResult<()> {
         if !identity(&edit.id)||!identity(&edit.page_id)||!edit.height.is_finite()||edit.height<=0.0||edit.height>MAX_PAGE_HEIGHT
             ||edit.insert.len()>1000||edit.remove.len()>1000||edit.remove.iter().any(|id|!identity(id))
-            ||edit.insert_images.len()>MAX_PAGE_IMAGES||edit.remove_images.len()>MAX_PAGE_IMAGES||edit.remove_images.iter().any(|id|!identity(id)) {return Err("Invalid page edit.".into());}
+            ||edit.insert_images.len()>MAX_PAGE_IMAGES||edit.remove_images.len()>MAX_PAGE_IMAGES||edit.remove_images.iter().any(|id|!identity(id))
+            ||edit.insert_texts.len()>MAX_PAGE_TEXTS||edit.remove_texts.len()>MAX_PAGE_TEXTS||edit.remove_texts.iter().any(|id|!identity(id)) {return Err("Invalid page edit.".into());}
         let digest=crate::pdf_assets::sha256_hex(serde_json::to_vec(edit)?);
         let transaction=self.connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         if let Some(existing)=transaction.query_row("SELECT digest FROM applied_edits WHERE id=?1",[&edit.id],|row|row.get::<_,String>(0)).optional()?{
@@ -166,6 +185,22 @@ impl Database {
             }else{transaction.execute("INSERT INTO images VALUES(?1,?2,?3,?4)",params![image.id,edit.page_id,image.order,serde_json::to_string(image)?])?;}
             transaction.execute("UPDATE pages SET next_order=MAX(next_order,?1) WHERE id=?2",params![image.order+1,edit.page_id])?;
         }
+        let mut text_ids=HashSet::new();
+        for text in &edit.insert_texts{
+            validate_text(text,&page)?;
+            if !text_ids.insert(&text.id){return Err("Duplicate text box identity.".into());}
+        }
+        for id in &edit.remove_texts {transaction.execute("DELETE FROM texts WHERE page_id=?1 AND id=?2",params![edit.page_id,id])?;}
+        for text in &edit.insert_texts{
+            let existing:Option<(String,String)>=transaction.query_row("SELECT page_id,data FROM texts WHERE id=?1",[&text.id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+            if let Some((page,data))=existing{
+                let stored:PageText=serde_json::from_str(&data)?;
+                if page!=edit.page_id||stored!=*text{return Err("Conflicting stored text box.".into());}
+            }else{transaction.execute("INSERT INTO texts VALUES(?1,?2,?3,?4)",params![text.id,edit.page_id,text.order,serde_json::to_string(text)?])?;}
+            transaction.execute("UPDATE pages SET next_order=MAX(next_order,?1) WHERE id=?2",params![text.order+1,edit.page_id])?;
+        }
+        let texts:i64=transaction.query_row("SELECT count(*) FROM texts WHERE page_id=?1",[&edit.page_id],|r|r.get(0))?;
+        if texts as usize>MAX_PAGE_TEXTS{return Err(format!("Höchstens {MAX_PAGE_TEXTS} Textfelder pro Seite.").into());}
         let images:i64=transaction.query_row("SELECT count(*) FROM images WHERE page_id=?1",[&edit.page_id],|r|r.get(0))?;
         if images as usize>MAX_PAGE_IMAGES{return Err(format!("Höchstens {MAX_PAGE_IMAGES} Bilder pro Seite.").into());}
         transaction.execute("UPDATE pages SET height=?1 WHERE id=?2",params![height,edit.page_id])?;
@@ -183,6 +218,17 @@ pub(super) fn validate_image(image:&PageImage,page:&PageSize)->StorageResult<()>
         ||image.x<0.0||image.y<0.0||image.width<MIN_IMAGE_SIZE||image.height<MIN_IMAGE_SIZE
         ||image.x+image.width>page.width+1e-3||image.y+image.height>page.height+1e-3||image.order<0||image.order>9_007_199_254_740_990{
         return Err("Invalid image placement.".into());
+    }
+    Ok(())
+}
+
+pub(super) fn validate_text(text:&PageText,page:&PageSize)->StorageResult<()>{
+    let finite=[text.x,text.y,text.width].iter().all(|v|v.is_finite());
+    let color=text.color.len()==7&&text.color.starts_with('#')&&text.color.as_bytes()[1..].iter().all(u8::is_ascii_hexdigit);
+    if !identity(&text.id)||!finite||text.x<0.0||text.y<0.0||text.y>page.height||text.width<MIN_TEXT_WIDTH||text.x+text.width>page.width+1e-3
+        ||text.text.trim().is_empty()||text.text.chars().count()>MAX_TEXT_LENGTH||!["small","medium","large"].contains(&text.size.as_str())
+        ||!color||text.order<0||text.order>9_007_199_254_740_990{
+        return Err("Invalid text box.".into());
     }
     Ok(())
 }
@@ -230,7 +276,16 @@ fn read_page(connection: &Connection, id: &str) -> StorageResult<NotePage> {
         if image.id != identity { return Err("Invalid stored image identity.".into()); }
         next = next.max(image.order+1); images.push(image);
     }
+    let text_rows = connection.prepare("SELECT id,data FROM texts WHERE page_id=?1 ORDER BY position")?
+        .query_map([id], |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?)))?.collect::<Result<Vec<_>,_>>()?;
+    let mut texts = Vec::new();
+    for (identity,data) in text_rows {
+        let text: PageText = serde_json::from_str(&data)?;
+        validate_text(&text, &PageSize {width,height})?;
+        if text.id != identity { return Err("Invalid stored text box identity.".into()); }
+        next = next.max(text.order+1); texts.push(text);
+    }
     let background: Option<PdfBackground> = background.map(|data| serde_json::from_str(&data)).transpose()?;
     if let Some(pdf)=&background { validate_notebook_background(pdf)?; }
-    Ok(NotePage {id:id.into(),title,width,height,background,strokes,images,next_order:next})
+    Ok(NotePage {id:id.into(),title,width,height,background,strokes,images,texts,next_order:next})
 }

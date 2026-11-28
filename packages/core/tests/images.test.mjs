@@ -28,7 +28,7 @@ test('edits carry image changes; stroke-only edits keep their old shape', () => 
   const history = new EditHistory();
   const strokesOnly = history.record('p', 1600, [], []);
   assert.deepEqual(Object.keys(strokesOnly).sort(), ['height', 'id', 'insert', 'pageId', 'remove']);
-  const inserted = history.record('p', 1600, [], [], {insert: [image('i')], removed: []});
+  const inserted = history.record('p', 1600, [], [], {images: {insert: [image('i')], removed: []}});
   assert.equal(validPageEdit(inserted), true);
   assert.deepEqual(inserted.insertImages, [image('i')]);
   assert.deepEqual(inserted.removeImages, []);
@@ -40,17 +40,17 @@ test('applying edits inserts, moves (remove + insert) and removes images; undo r
   const notebook = snapshot(page()).notebook, history = new EditHistory();
   const apply = edit => applyNotebookEvent(notebook, {type: 'edit', edit});
   const target = () => notebook.topics[0].pages[0];
-  apply(history.record('p', 1600, [], [], {insert: [image('i', {order: 7})], removed: []}));
+  apply(history.record('p', 1600, [], [], {images: {insert: [image('i', {order: 7})], removed: []}}));
   assert.deepEqual(target().images, [image('i', {order: 7})]);
   assert.equal(target().nextOrder, 8);
   const moved = image('i', {order: 7, x: 500});
-  apply(history.record('p', 1600, [], [], {insert: [moved], removed: [target().images[0]]}));
+  apply(history.record('p', 1600, [], [], {images: {insert: [moved], removed: [target().images[0]]}}));
   assert.equal(target().images[0].x, 500);
   apply(history.undo());
   assert.equal(target().images[0].x, 100);
-  apply(history.record('p', 1600, [], [], {insert: [], removed: [target().images[0]]}));
+  apply(history.record('p', 1600, [], [], {images: {insert: [], removed: [target().images[0]]}}));
   assert.deepEqual(target().images, []);
-  assert.throws(() => { apply(history.record('p', 1600, [], [], {insert: [image('j')], removed: []})); apply(history.record('p', 1600, [], [], {insert: [image('j')], removed: []})); }, /Conflicting image/);
+  assert.throws(() => { apply(history.record('p', 1600, [], [], {images: {insert: [image('j')], removed: []}})); apply(history.record('p', 1600, [], [], {images: {insert: [image('j')], removed: []}})); }, /Conflicting image/);
 });
 
 test('placement fits the visible area without upscaling', () => {

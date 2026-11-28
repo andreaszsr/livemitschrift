@@ -1,15 +1,18 @@
-import { applyNotebookEvent, createStrokeId, imageAt, MAX_PAGE_IMAGES, moveImage, placeImage, resizeImage, LINE_MIN_LENGTH_PX, SHAPE_KINDS, SHAPE_PRESSURE, shapeStrokes, snapToGrid, DrawingSession, EditHistory, findPage, hitStroke, HoldDetector, pressureWidth, straightLine, clampOffset, lassoSelection, pasteStrokes, strokeBounds, translateStrokes, InkDocument, LaserPointer, MAX_DOCUMENT_HEIGHT, MAX_PDF_BYTES, notebookPages, notebookPdfPlacement, PAGE_SIZE, PenInput, ViewportInkRenderer } from '@livemitschrift/core';
-import type { ImageCorner, PageImage, ShapeKind } from '@livemitschrift/core';
+import { applyNotebookEvent, createStrokeId, imageAt, MIN_TEXT_WIDTH, normalizeText, textAt, textBoxLayout, TEXT_SIZES, MAX_PAGE_IMAGES, moveImage, placeImage, resizeImage, LINE_MIN_LENGTH_PX, SHAPE_KINDS, SHAPE_PRESSURE, shapeStrokes, snapToGrid, DrawingSession, EditHistory, findPage, hitStroke, HoldDetector, pressureWidth, straightLine, clampOffset, lassoSelection, pasteStrokes, strokeBounds, translateStrokes, InkDocument, LaserPointer, MAX_DOCUMENT_HEIGHT, MAX_PDF_BYTES, notebookPages, notebookPdfPlacement, PAGE_SIZE, PenInput, ViewportInkRenderer } from '@livemitschrift/core';
+import type { ImageCorner, PageImage, PageText, ShapeKind, TextSize } from '@livemitschrift/core';
 import type { InputHandlers, InputObservation, NotebookSnapshot, Notebook, NotePage, PageEdit, Topic, Point, Stroke, Vector, ViewPosition } from '@livemitschrift/core';
 import { SelectionOverlay } from './selection-overlay.js';
 import { LinePreview } from './line-preview.js';
 import { ShapePreview } from './shape-preview.js';
 import { imageFile, prepareImage } from './image-import.js';
+import { TextEditor } from './text-editor.js';
+import sansFontUrl from '@livemitschrift/ui/fonts/LiveMitschriftSans.ttf?url';
+import monoFontUrl from '@livemitschrift/ui/fonts/LiveMitschriftMono.ttf?url';
 import { loadPdfDocument, NotebookPdfRenderer, PageThumbnails } from '@livemitschrift/pdf';
-import { button, escapeHtml, icon, ImageLayer, Toolbar, toolbarPreferences, ViewportZoom, zoomControls } from '@livemitschrift/ui';
+import { button, escapeHtml, icon, ImageLayer, TextLayer, Toolbar, toolbarPreferences, ViewportZoom, zoomControls } from '@livemitschrift/ui';
 import type { ToolbarAction } from '@livemitschrift/ui';
 import { NativePenInput, nativeInputAvailable } from './native-input.js';
-import { closeApp, desktopStorageAvailable, openLiveViewer, readImageAsset, readPdfAsset, storeImageAsset, storePdfAsset, toggleFullscreen } from './local-store.js';
+import { closeApp, desktopStorageAvailable, openLink, openLiveViewer, readImageAsset, readPdfAsset, storeImageAsset, storePdfAsset, toggleFullscreen } from './local-store.js';
 import { encode as encodeQr } from 'uqr';
 import { acknowledgeChanges, backupNotebook, createNotebook, createTopic, deleteNotebook, deleteTopic, editPage, forgetPublisherKey, insertBlankPage, loadLibrary, loadNotebook, loadPublisherKey, outgoingChanges, renameItem, reorderItems, restoreNotebook, chooseExportFolder, exportPdfToFolder, savePublisherKey, setPreference, syncCheckpoint, syncStatus, syncTarget } from './notebook-store.js';
 import type { Library, NotebookLoad } from './notebook-store.js';
@@ -37,12 +40,14 @@ function parse(value: string | undefined): unknown { try {
 catch {
     return null;
 } }
-type Tool = 'pen' | 'eraser' | 'highlighter' | 'laser' | 'lasso' | 'shape';
+type Tool = 'pen' | 'eraser' | 'highlighter' | 'laser' | 'lasso' | 'shape' | 'text';
 const SHAPE_LABELS: Record<ShapeKind, string> = {rectangle: 'Rechteck', circle: 'Kreis', quadrant: 'Koordinatensystem', cross: 'Achsenkreuz'};
 const SHAPE_HINTS: Record<ShapeKind, string> = {rectangle: 'Von Ecke zu Ecke ziehen.', circle: 'Vom Mittelpunkt aus ziehen; der Abstand ist der Radius.', quadrant: 'Am Ursprung ansetzen und zum Ende der Achsen ziehen (ein Quadrant).', cross: 'Ein Rechteck aufziehen; die Achsen kreuzen sich in der Mitte (vier Quadranten).'};
 /** Snap spacing when the page has no visible grid. */
 const DEFAULT_SNAP_MM = 5;
-const TOOL_KEYS: Record<string, Tool> = {p: 'pen', e: 'eraser', h: 'highlighter', l: 'laser', s: 'lasso'};
+const TOOL_KEYS: Record<string, Tool> = {p: 'pen', e: 'eraser', h: 'highlighter', l: 'laser', s: 'lasso', t: 'text'};
+/** Width of a new text box in document units (about 8.4 cm on A4). */
+const NEW_TEXT_WIDTH = 480;
 const initialPage: NotePage = { id: 'local-page', title: 'Seite 1', ...PAGE_SIZE, background: null, strokes: [], nextOrder: 0 };
 class Editor {
     private readonly persistent = desktopStorageAvailable();
@@ -109,6 +114,16 @@ class Editor {
     private selectedImage: string | null = null;
     private imageDrag: {mode: 'move' | ImageCorner; start: Point; original: PageImage; current: PageImage} | null = null;
     private imageClipboard: {image: PageImage; pageId: string; pastes: number} | null = null;
+    private readonly texts: TextLayer;
+    private readonly textEditor: TextEditor;
+    /** The box being edited before the edit (null for a new box). */
+    private textOriginal: PageText | null = null;
+    private selectedText: string | null = null;
+    private textDrag: {mode: 'move' | 'w' | 'e'; start: Point; original: PageText; current: PageText} | null = null;
+    private lastTextTap: {id: string; time: number} | null = null;
+    private textClipboard: {text: PageText; pageId: string; pastes: number} | null = null;
+    /** The current pen gesture only ended text editing or placed a text box. */
+    private textGesture = false;
     /** Written to the system clipboard on internal copies, so a later paste can tell them from new screenshots. */
     private clipboardMarker = '';
     private pasteFallback: number | undefined;
@@ -149,6 +164,8 @@ class Editor {
         this.linePreview = new LinePreview(this.paper, this.pageSize);
         this.shapePreview = new ShapePreview(this.paper, this.pageSize);
         // Local image files become blob URLs; they are immutable, so each is read once per session.
+        this.texts = new TextLayer(this.paper, href => void openLink(href).catch(report));
+        this.textEditor = new TextEditor(this.paper, () => this.finishText());
         this.images = new ImageLayer(this.paper, this.canvas, async assetId => URL.createObjectURL(new Blob([(await readImageAsset(assetId)).slice().buffer])));
         this.pdf = new NotebookPdfRenderer(element<HTMLCanvasElement>('pdf-background'), readPdfAsset, error => { element('pdf-status').textContent = String(error); report(`PDF-Darstellung fehlgeschlagen: ${String(error)}`); });
         this.toolbar = new Toolbar(element('toolbar'), this.writingIds, true,
@@ -175,6 +192,9 @@ class Editor {
             : { color: this.color, width: this.width, order: this.current.nextOrder++ });
         const handlers: InputHandlers = { enabled: () => this.ready && !this.busy && !this.closing, start: point => {
                 this.metrics.accept([point], this.renderer.pixelsPerUnit, true);
+                // A tap outside the box being edited only ends the editing.
+                if (this.textEditor.active) { this.finishText(); this.textGesture = true; return; }
+                if (this.drawingTool === 'text') { this.textTap(point); this.textGesture = true; return; }
                 if (this.drawingTool === 'laser') { this.laserActive = true; this.pointer(point); }
                 else if (this.drawingTool === 'lasso') this.lassoStart(point);
                 else if (this.drawingTool === 'shape') { this.shapeDrag = {start: point, end: point}; this.previewShape(); }
@@ -188,9 +208,9 @@ class Editor {
                     this.hold.begin(point, performance.now());
                     this.scheduleHold();
                 }
-            }, points: points => { this.metrics.accept(points, this.renderer.pixelsPerUnit); if (this.laserActive)
+            }, points: points => { this.metrics.accept(points, this.renderer.pixelsPerUnit); if (this.textGesture) return; if (this.laserActive)
                 this.pointer(points.at(-1) ?? null);
-            else if (this.move || this.lassoPath || this.imageDrag)
+            else if (this.move || this.lassoPath || this.imageDrag || this.textDrag)
                 this.lassoPoints(points);
             else if (this.drawingTool === 'eraser')
                 for (const point of points)
@@ -216,7 +236,7 @@ class Editor {
         void this.restore();
     }
     private get drawingTool(): Tool {return this.temporaryEraser ? 'eraser' : this.tool;}
-    private selectTool(tool: Tool): void {this.input.finish(); if (tool !== 'lasso') this.clearSelection(); this.tool = tool; this.status();}
+    private selectTool(tool: Tool): void {this.input.finish(); if (this.textEditor.active) this.finishText(); if (tool !== 'lasso') this.clearSelection(); this.tool = tool; this.status();}
     // ---- Lasso: select, move, copy/cut/paste/delete -------------------------
     private selectionBounds(): ReturnType<typeof strokeBounds> { return strokeBounds(this.selection); }
     private lassoStart(point: Point): void {
@@ -225,7 +245,7 @@ class Editor {
             this.move = {start: point, offset: {x: 0, y: 0}, frame: null};
             return;
         }
-        if (this.imageStart(point)) return;
+        if (this.textStart(point) || this.imageStart(point)) return;
         this.clearSelection();
         this.lassoPath = [point];
         this.selectionOverlay.lasso(this.lassoPath);
@@ -234,6 +254,7 @@ class Editor {
         const last = points.at(-1);
         if (!last) return;
         if (this.lassoPath) { this.lassoPath.push(...points); this.selectionOverlay.lasso(this.lassoPath); return; }
+        if (this.textDrag) { this.textMove(last); return; }
         if (this.imageDrag) { this.imageMove(last); return; }
         const move = this.move!;
         move.offset = clampOffset(this.selection, {x: last.x - move.start.x, y: last.y - move.start.y}, this.pageSize);
@@ -247,6 +268,7 @@ class Editor {
         });
     }
     private lassoEnd(): void {
+        if (this.textDrag) { this.textEnd(); return; }
         if (this.imageDrag) { this.imageEnd(); return; }
         if (this.lassoPath) {
             const path = this.lassoPath; this.lassoPath = null;
@@ -268,6 +290,7 @@ class Editor {
         if (this.move) { if (this.move.frame !== null) cancelAnimationFrame(this.move.frame); this.move = null; this.redrawPage(); }
         this.selection = []; this.lassoPath = null; this.selectionOverlay.clear();
         this.selectImage(null);
+        this.selectText(null);
     }
     private redrawPage(): void {
         this.ink.replace({ type: 'snapshot', page: this.pageSize, strokes: this.current.strokes });
@@ -275,6 +298,117 @@ class Editor {
         this.renderer.invalidate();
         this.images.render(this.current.images ?? []);
         this.selectImage(this.selectedImage);
+        this.texts.render(this.current.texts ?? [], this.textEditor.editing?.id ?? null);
+        this.selectText(this.selectedText);
+    }
+    // ---- Text boxes: Text tool, editing, lasso selection, width, copy, delete ----
+    private pageText(id: string | null): PageText | undefined { return id ? (this.current.texts ?? []).find(box => box.id === id) : undefined; }
+    private selectText(id: string | null): void {
+        const box = this.pageText(id);
+        this.selectedText = box?.id ?? null;
+        this.texts.select(box ?? null);
+    }
+    /** Text tool: a tap on a box edits it, elsewhere it starts a new box at the tap. */
+    private textTap(point: Point): void {
+        const existing = textAt(this.current.texts ?? [], point);
+        if (existing) { this.editText(existing); return; }
+        if ((this.current.texts?.length ?? 0) >= 50) { report('Höchstens 50 Textfelder pro Seite.'); return; }
+        const size = TEXT_SIZES.includes(this.library.preferences['text-size'] as TextSize) ? this.library.preferences['text-size'] as TextSize : 'medium';
+        const width = NEW_TEXT_WIDTH, line = textBoxLayout({text: 'x', size, code: false, width}).lineHeight;
+        this.editText({id: createStrokeId(), x: Math.min(Math.max(0, point.x), this.pageSize.width - width), y: Math.max(0, point.y - line / 2),
+            width, text: '', size, color: this.color, code: false, order: 0}, true);
+    }
+    private editText(box: PageText, isNew = false): void {
+        this.clearSelection();
+        this.textOriginal = isNew ? null : box;
+        this.textEditor.open(box);
+        this.texts.render(this.current.texts ?? [], box.id);
+        this.status();
+    }
+    /** Store the edited box: insert, replace (same identity) or remove when emptied. */
+    private finishText(): void {
+        const draft = this.textEditor.close(), original = this.textOriginal;
+        this.textOriginal = null;
+        if (!draft) return;
+        const text = normalizeText(draft.text);
+        this.preference('text-size', draft.size);
+        if (!text) {
+            if (original) this.commitEdit(this.history().record(this.current.id, this.current.height, [], [], {texts: {insert: [], removed: [original]}}));
+            else this.texts.render(this.current.texts ?? []);
+            this.status();
+            return;
+        }
+        const box: PageText = {...draft, text, order: original ? original.order : this.current.nextOrder++};
+        if (original && JSON.stringify(original) === JSON.stringify(box)) { this.texts.render(this.current.texts ?? []); this.status(); return; }
+        this.growPage(box.y + textBoxLayout(box).height);
+        this.commitEdit(this.history().record(this.current.id, this.current.height, [], [], {texts: {insert: [box], removed: original ? [original] : []}}));
+        this.status();
+    }
+    /** Lasso: tap selects a box (double tap edits); drag inside moves it, drag a side handle changes its width. */
+    private textStart(point: Point): boolean {
+        const boxes = this.current.texts ?? [], selected = this.pageText(this.selectedText), reach = 14 / this.renderer.pixelsPerUnit;
+        let mode: 'move' | 'w' | 'e' = 'move', target = textAt(boxes, point);
+        if (selected) {
+            const height = textBoxLayout(selected).height, inside = point.y >= selected.y - reach && point.y <= selected.y + height + reach;
+            if (inside && Math.abs(point.x - selected.x) <= reach) { mode = 'w'; target = selected; }
+            else if (inside && Math.abs(point.x - selected.x - selected.width) <= reach) { mode = 'e'; target = selected; }
+        }
+        if (!target) return false;
+        this.selection = []; this.selectionOverlay.clear(); this.selectImage(null);
+        this.selectText(target.id);
+        this.textDrag = {mode, start: point, original: target, current: target};
+        return true;
+    }
+    private textMove(point: Point): void {
+        const drag = this.textDrag!, box = drag.original, right = box.x + box.width;
+        if (drag.mode === 'move') drag.current = {...box, ...moveImage(box, point.x - drag.start.x, point.y - drag.start.y)};
+        else if (drag.mode === 'e') drag.current = {...box, width: Math.min(this.pageSize.width - box.x, Math.max(MIN_TEXT_WIDTH, point.x - box.x))};
+        else { const x = Math.min(right - MIN_TEXT_WIDTH, Math.max(0, point.x)); drag.current = {...box, x, width: right - x}; }
+        this.texts.preview(drag.current);
+    }
+    private textEnd(): void {
+        const {original, current} = this.textDrag!;
+        this.textDrag = null;
+        if (Math.abs(current.x - original.x) < .5 && Math.abs(current.y - original.y) < .5 && Math.abs(current.width - original.width) < .5) {
+            this.texts.preview(original);
+            // A second tap on the same box within a short time edits it.
+            const now = performance.now();
+            if (this.lastTextTap?.id === original.id && now - this.lastTextTap.time < 450) { this.lastTextTap = null; this.editText(original); return; }
+            this.lastTextTap = {id: original.id, time: now};
+            return;
+        }
+        this.lastTextTap = null;
+        this.growPage(current.y + textBoxLayout(current).height);
+        this.commitEdit(this.history().record(this.current.id, this.current.height, [], [], {texts: {insert: [current], removed: [original]}}));
+    }
+    private deleteText(): void {
+        const box = this.pageText(this.selectedText);
+        if (!box || !this.ready || this.busy) return;
+        this.selectText(null);
+        this.commitEdit(this.history().record(this.current.id, this.current.height, [], [], {texts: {insert: [], removed: [box]}}));
+    }
+    private copyText(cut: boolean): void {
+        const box = this.pageText(this.selectedText);
+        if (!box || !this.ready || this.busy) return;
+        this.textClipboard = {text: structuredClone(box), pageId: this.current.id, pastes: 0};
+        this.clipboard = null; this.imageClipboard = null;
+        this.markClipboard();
+        if (cut) this.deleteText();
+    }
+    private pasteText(): void {
+        const clipboard = this.textClipboard;
+        if (!clipboard || !this.ready || this.busy || this.closing) return;
+        if ((this.current.texts?.length ?? 0) >= 50) { report('Höchstens 50 Textfelder pro Seite.'); return; }
+        const pointer = this.pointerInView(), box = clipboard.text;
+        const step = pointer ? 0 : clipboard.pageId === this.current.id ? 24 * ++clipboard.pastes : 0;
+        const placed = pointer ? moveImage(box, pointer.x - box.width / 2 - box.x, pointer.y - box.y) : moveImage(box, step, step);
+        const pasted: PageText = {...placed, id: createStrokeId(), order: this.current.nextOrder++};
+        this.growPage(pasted.y + textBoxLayout(pasted).height);
+        this.commitEdit(this.history().record(this.current.id, this.current.height, [], [], {texts: {insert: [pasted], removed: []}}));
+        this.clearSelection();
+        this.tool = 'lasso';
+        this.selectText(pasted.id);
+        this.status();
     }
     // ---- Images: insert, select with the lasso, move, resize, copy, delete ----
     private pageImage(id: string | null): PageImage | undefined { return id ? (this.current.images ?? []).find(image => image.id === id) : undefined; }
@@ -314,7 +448,7 @@ class Editor {
             return;
         }
         this.growPage(current.y + current.height);
-        this.commitEdit(this.history().record(this.current.id, this.current.height, [], [], {insert: [current], removed: [original]}));
+        this.commitEdit(this.history().record(this.current.id, this.current.height, [], [], {images: {insert: [current], removed: [original]}}));
     }
     private growPage(bottom: number): void {
         if (bottom <= this.current.height) return;
@@ -343,7 +477,7 @@ class Editor {
     }
     private addImage(image: PageImage): void {
         this.growPage(image.y + image.height);
-        this.commitEdit(this.history().record(this.current.id, this.current.height, [], [], {insert: [image], removed: []}));
+        this.commitEdit(this.history().record(this.current.id, this.current.height, [], [], {images: {insert: [image], removed: []}}));
         this.clearSelection();
         this.tool = 'lasso';
         this.selectImage(image.id);
@@ -353,7 +487,7 @@ class Editor {
         const image = this.pageImage(this.selectedImage);
         if (!image || !this.ready || this.busy) return;
         this.imageClipboard = {image: structuredClone(image), pageId: this.current.id, pastes: 0};
-        this.clipboard = null;
+        this.clipboard = null; this.textClipboard = null;
         this.markClipboard();
         if (cut) this.deleteImage();
     }
@@ -361,7 +495,7 @@ class Editor {
         const image = this.pageImage(this.selectedImage);
         if (!image || !this.ready || this.busy) return;
         this.selectImage(null);
-        this.commitEdit(this.history().record(this.current.id, this.current.height, [], [], {insert: [], removed: [image]}));
+        this.commitEdit(this.history().record(this.current.id, this.current.height, [], [], {images: {insert: [], removed: [image]}}));
     }
     private pasteImage(): void {
         const clipboard = this.imageClipboard;
@@ -379,7 +513,8 @@ class Editor {
         void navigator.clipboard?.writeText(this.clipboardMarker).catch(() => { this.clipboardMarker = ''; });
     }
     private pasteInternal(): void {
-        if (this.imageClipboard) this.pasteImage();
+        if (this.textClipboard) this.pasteText();
+        else if (this.imageClipboard) this.pasteImage();
         else if (this.clipboard) this.paste();
     }
     /** Apply a local edit like undo/redo does: page model, ink, durable queue and live viewers. */
@@ -393,7 +528,7 @@ class Editor {
     private copySelection(cut: boolean): void {
         if (!this.selection.length || !this.ready || this.busy) return;
         this.clipboard = {strokes: structuredClone(this.selection), pageId: this.current.id, pastes: 0};
-        this.imageClipboard = null;
+        this.imageClipboard = null; this.textClipboard = null;
         this.markClipboard();
         if (cut) this.deleteSelection();
     }
@@ -473,7 +608,7 @@ class Editor {
             if ((event.target as Element | null)?.closest?.('input,select,textarea,dialog')) return;
             window.clearTimeout(this.pasteFallback); this.pasteFallback = undefined;
             const file = imageFile(event.clipboardData), text = event.clipboardData?.getData('text/plain') ?? '';
-            const internal = (this.clipboard || this.imageClipboard) && this.clipboardMarker !== '' && text === this.clipboardMarker;
+            const internal = (this.clipboard || this.imageClipboard || this.textClipboard) && this.clipboardMarker !== '' && text === this.clipboardMarker;
             event.preventDefault();
             if (file && !internal) this.insertImage(file);
             else this.pasteInternal();
@@ -551,12 +686,15 @@ class Editor {
             const clip = (event.metaKey || event.ctrlKey) && !event.altKey ? event.key.toLowerCase() : '';
             if ((clip === 'c' || clip === 'x') && this.selection.length) { event.preventDefault(); this.copySelection(clip === 'x'); return; }
             if ((clip === 'c' || clip === 'x') && this.selectedImage) { event.preventDefault(); this.copyImage(clip === 'x'); return; }
+            if ((clip === 'c' || clip === 'x') && this.selectedText) { event.preventDefault(); this.copyText(clip === 'x'); return; }
+            if (event.key === 'Enter' && this.selectedText) { event.preventDefault(); const box = this.pageText(this.selectedText); if (box) this.editText(box); return; }
             // The paste event decides between a system clipboard image and internal content; if WebKit
             // sends no paste event (nothing editable is focused), fall back to the internal clipboard.
             if (clip === 'v') { window.clearTimeout(this.pasteFallback); this.pasteFallback = window.setTimeout(() => this.pasteInternal(), 80); return; }
             if ((event.key === 'Backspace' || event.key === 'Delete') && this.selection.length) { event.preventDefault(); this.deleteSelection(); return; }
             if ((event.key === 'Backspace' || event.key === 'Delete') && this.selectedImage) { event.preventDefault(); this.deleteImage(); return; }
-            if (event.key === 'Escape' && (this.selection.length || this.selectedImage)) { this.clearSelection(); return; }
+            if ((event.key === 'Backspace' || event.key === 'Delete') && this.selectedText) { event.preventDefault(); this.deleteText(); return; }
+            if (event.key === 'Escape' && (this.selection.length || this.selectedImage || this.selectedText)) { this.clearSelection(); return; }
             if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey)
                 return;
             // Presenter remotes and tablet ExpressKeys usually send these keys.
@@ -600,7 +738,7 @@ class Editor {
             // Actions that joined the writing bar later appear once on existing layouts.
             if (toolbarPreference && typeof toolbarPreference === 'object' && Array.isArray((toolbarPreference as {pinned?: unknown}).pinned)) {
                 const pinned = (toolbarPreference as {pinned: unknown[]}).pinned;
-                for (const [flag, ids] of [['toolbar-grid-added', ['grid']], ['toolbar-shapes-added', ['shape', 'snap']]] as const) {
+                for (const [flag, ids] of [['toolbar-grid-added', ['grid']], ['toolbar-shapes-added', ['shape', 'snap']], ['toolbar-text-added', ['text']]] as const) {
                     if (this.library.preferences[flag] === 'true') continue;
                     for (const id of ids) if (!pinned.includes(id)) {
                         const previous = writingActionIds(this.pen)[writingActionIds(this.pen).indexOf(id) - 1]!;
@@ -611,6 +749,7 @@ class Editor {
             this.toolbar.configure(toolbarPreference);
             this.preference('toolbar-grid-added', 'true');
             this.preference('toolbar-shapes-added', 'true');
+            this.preference('toolbar-text-added', 'true');
             const storedShape = this.library.preferences['shape-kind'];
             if (SHAPE_KINDS.includes(storedShape as ShapeKind)) this.shapeKind = storedShape as ShapeKind;
             this.snap = this.library.preferences.snap === 'true';
@@ -776,7 +915,9 @@ class Editor {
     private async exportPdf(topic: Topic, folder: string, name: string): Promise<boolean> {
         await this.requireSaved();
         const {exportTopicPdf} = await import('@livemitschrift/pdf/export');
-        const pdf = await exportTopicPdf(topic, readPdfAsset, {readImage: readImageAsset});
+        // The text box fonts are bundled with the app (same files as the stylesheet uses).
+        const readFont = async (url: string): Promise<Uint8Array> => new Uint8Array(await (await fetch(url)).arrayBuffer());
+        const pdf = await exportTopicPdf(topic, readPdfAsset, {readImage: readImageAsset, readFonts: async () => ({sans: await readFont(sansFontUrl), mono: await readFont(monoFontUrl)})});
         if (await exportPdfToFolder(folder, name, false, pdf) === 'saved') return true;
         if (!await this.confirmDelete('Datei ersetzen?', `„${name}.pdf“ gibt es im Exportordner bereits.`, undefined, 'Ersetzen')) return false;
         return await exportPdfToFolder(folder, name, true, pdf) === 'saved';
@@ -813,6 +954,7 @@ class Editor {
         this.display(findPage(this.notebook,pageId));this.publisher?.changed();
     }
     private display(page: NotePage): void {
+        if (this.textEditor.active && this.current !== page) this.finishText();
         if (this.laserActive || this.pendingPointer) this.pointer(null);
         this.laserActive = false; this.laser.clear();
         this.clearSelection();
@@ -823,6 +965,7 @@ class Editor {
         this.sizePaper();
         this.applyGrid();
         this.images.render(page.images ?? []);
+        this.texts.render(page.texts ?? []);
         this.viewport.scrollTop = (this.positions[page.id] ?? 0) * this.paper.getBoundingClientRect().width / page.width;
         this.renderer.invalidate();
         this.updateToolbar();
@@ -872,7 +1015,7 @@ class Editor {
         this.display(this.notebook.topics.find(topic => topic.id === id)!.pages[0]!);
         this.publisher?.refresh();
     }
-    private finishGesture(): void { if (this.laserActive) { this.laserActive = false; this.pointer(null); } if (this.lassoPath || this.move || this.imageDrag) this.lassoEnd(); this.endShape(); this.endHold(); this.session.finish(); if (this.erased.size) {
+    private finishGesture(): void { if (this.laserActive) { this.laserActive = false; this.pointer(null); } if (this.textGesture) { this.textGesture = false; this.status(); return; } if (this.lassoPath || this.move || this.imageDrag || this.textDrag) this.lassoEnd(); this.endShape(); this.endHold(); this.session.finish(); if (this.erased.size) {
         this.queue.enqueue(this.history().record(this.current.id, this.current.height, [], [...this.erased.values()]));
         this.erased.clear();
     } this.lastErase = null; this.status(); }
@@ -1005,6 +1148,7 @@ class Editor {
         if (!this.ready || this.busy || this.closing)
             return;
         this.input.finish();
+        if (this.textEditor.active) this.finishText();
         this.clearSelection();
         const edit = redo ? this.history().redo() : this.history().undo();
         if (!edit)
@@ -1016,6 +1160,7 @@ class Editor {
         this.publisher?.publish({ type: 'edit', edit });
         this.renderer.invalidate();
         this.images.render(this.current.images ?? []);
+        this.texts.render(this.current.texts ?? []);
         this.status();
     }
     private sizePaper(): void {this.zoom.resize();}
@@ -1139,6 +1284,7 @@ class Editor {
             blank: 'Ein neues Thema mit einer leeren Schreibseite im aktuellen Notizbuch anlegen.',
             'blank-page': 'Direkt nach der aktuellen Seite eine leere Schreibseite einfügen.',
             zoom: 'Vergrößerung, Anpassung an die Fensterbreite und Zoom-Sperre einstellen.',
+            text: 'Textfeld: auf die Seite tippen und schreiben, ein Textfeld antippen zum Bearbeiten. Links mit https:// werden für Studierende anklickbar (Taste T).',
             shape: `${SHAPE_LABELS[this.shapeKind]} zeichnen: ${SHAPE_HINTS[this.shapeKind]} Erneut tippen, um Rechteck, Kreis, Koordinatensystem oder Achsenkreuz zu wählen.`,
             snap: 'Ecken, Mittelpunkte, Achsen und die Enden gerader Linien auf Rasterpunkte setzen. Ohne Raster auf der Seite gilt ein 5-mm-Raster.',
             grid: 'Karo-, Linien- oder Punktraster für Notizbuch, Thema oder Seite einstellen. Nur für Sie sichtbar, nicht für Studierende und nicht im PDF-Export.',
@@ -1165,6 +1311,7 @@ class Editor {
             action('laser', 'Laserpointer', 'laser', () => this.selectTool('laser'), {pressed: this.drawingTool === 'laser'}),
             this.blankPageAction(action),
             action('grid', 'Raster', 'grid', () => this.gridDialog()),
+            action('text', 'Text', 'text', () => this.selectTool('text'), {pressed: this.drawingTool === 'text'}),
             action('shape', `Form: ${SHAPE_LABELS[this.shapeKind]}`, `shape-${this.shapeKind}`, () => { if (this.tool === 'shape') this.shapeMenu(); else this.selectTool('shape'); }, {pressed: this.drawingTool === 'shape'}),
             action('snap', 'Am Raster einrasten', 'snap', () => this.toggleSnap(), {pressed: this.snap}),
             // While marking, the shared width/color slots show the marker presets.

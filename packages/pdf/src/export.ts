@@ -1,6 +1,7 @@
 import { PDFDocument, PDFHexString, PDFName, PDFNumber, PDFString, StandardFonts, LineCapStyle, clip, endPath, popGraphicsState, pushGraphicsState, rectangle, rgb, degrees } from 'pdf-lib';
 import type { PDFFont, PDFImage, PDFPage } from 'pdf-lib';
-import { HIGHLIGHTER_OPACITY, notebookPdfPlacement, pressureWidth } from '@livemitschrift/core';
+import { HIGHLIGHTER_OPACITY, linkParts, measureText, notebookPdfPlacement, pressureWidth, textBoxLayout, textFontHasCharacter } from '@livemitschrift/core';
+import fontkit from '@pdf-lib/fontkit';
 import type { NotePage, Topic } from '@livemitschrift/core';
 
 const A4 = [595.28, 841.89] as const;
@@ -15,6 +16,7 @@ export function exportContentHeight(page: NotePage): number {
     for (const stroke of page.strokes) for (const point of stroke.points)
         height = Math.max(height, point.y + (stroke.highlighter ? stroke.width : pressureWidth(stroke.width, point.pressure)) / 2 + 16);
     for (const image of page.images ?? []) height = Math.max(height, image.y + image.height);
+    for (const box of page.texts ?? []) height = Math.max(height, box.y + textBoxLayout(box).height);
     return Math.max(1, height);
 }
 
@@ -115,6 +117,56 @@ function drawImages(target: PDFPage, page: NotePage, offset: number, embedded: M
     }
 }
 
+/** Bundled text box fonts, embedded once per export. */
+interface TextFonts { sans: PDFFont; mono: PDFFont }
+
+/**
+ * Text boxes above the ink: exactly the lines of the shared layout, drawn
+ * with the bundled fonts (no kerning or ligatures), so they match the editor
+ * and the reader view. URLs become PDF link annotations on each line part.
+ */
+function drawTexts(result: PDFDocument, target: PDFPage, page: NotePage, offset: number, fonts: TextFonts): void {
+    for (const box of page.texts ?? []) {
+        const layout = textBoxLayout(box);
+        if (box.y + layout.height < offset || box.y > offset + EXPORT_SLICE_HEIGHT) continue;
+        const font = box.code ? fonts.mono : fonts.sans;
+        const color = rgb(parseInt(box.color.slice(1, 3), 16) / 255, parseInt(box.color.slice(3, 5), 16) / 255, parseInt(box.color.slice(5, 7), 16) / 255);
+        const links = box.code ? [] : textLinks(box.text);
+        layout.lines.forEach((line, index) => {
+            const top = box.y + index * layout.lineHeight;
+            if (top + layout.lineHeight < offset || top > offset + EXPORT_SLICE_HEIGHT || !line) return;
+            // Characters outside the fonts were measured as "?" and are drawn as "?".
+            const printable = [...line].map(character => textFontHasCharacter(box.code, character) ? character : '?').join('');
+            target.drawText(printable, {x: MARGIN + box.x * SCALE, y: A4[1] - MARGIN - (top + layout.baseline - offset) * SCALE, size: layout.fontSize * SCALE, font, color});
+            const start = layout.starts[index]!, end = start + line.length;
+            for (const link of links) {
+                if (link.end <= start || link.start >= end) continue;
+                const from = Math.max(link.start, start) - start, to = Math.min(link.end, end) - start;
+                const left = MARGIN + (box.x + measureText(line.slice(0, from), box.code, layout.fontSize)) * SCALE;
+                const width = measureText(line.slice(from, to), box.code, layout.fontSize) * SCALE;
+                const upper = A4[1] - MARGIN - (top - offset) * SCALE;
+                addLink(result, target, [left, upper - layout.lineHeight * SCALE, left + width, upper], link.href);
+            }
+        });
+    }
+}
+
+function textLinks(text: string): {start: number; end: number; href: string}[] {
+    const links: {start: number; end: number; href: string}[] = [];
+    let offset = 0;
+    for (const part of linkParts(text)) {
+        if (part.href) links.push({start: offset, end: offset + part.text.length, href: part.href});
+        offset += part.text.length;
+    }
+    return links;
+}
+
+function addLink(result: PDFDocument, target: PDFPage, rect: number[], href: string): void {
+    const link = result.context.obj({Type: 'Annot', Subtype: 'Link', Rect: rect, Border: [0, 0, 0], F: 4,
+        A: {Type: 'Action', S: 'URI', URI: PDFString.of(href)}});
+    target.node.addAnnot(result.context.register(link));
+}
+
 function drawInk(target: PDFPage, page: NotePage, offset: number): void {
     const y = (value: number) => A4[1] - MARGIN - (value - offset) * SCALE;
     for (const stroke of page.strokes) {
@@ -142,7 +194,9 @@ function drawInk(target: PDFPage, page: NotePage, offset: number): void {
 
 /** Vector export; PDF backgrounds and ink share the editor's document transform. */
 export async function exportTopicPdf(topic: Topic, readAsset: (id: string, pageNumber?: number) => Promise<Uint8Array>,
-    options: {pagewiseAssets?: boolean; notes?: ExportNotes; readImage?: (assetId: string) => Promise<Uint8Array>} = {}): Promise<Uint8Array> {
+    options: {pagewiseAssets?: boolean; notes?: ExportNotes; readImage?: (assetId: string) => Promise<Uint8Array>;
+        /** The bundled text box fonts; required when a page has text boxes. */
+        readFonts?: () => Promise<{sans: Uint8Array; mono: Uint8Array}>} = {}): Promise<Uint8Array> {
     // Notes below the ink still need their slice.
     const contentHeight = (page: NotePage): number => Math.max(exportContentHeight(page),
         ...(options.notes?.byPage.get(page.id) ?? []).map(note => note.y + NOTE_ICON / SCALE));
@@ -159,6 +213,16 @@ export async function exportTopicPdf(topic: Topic, readAsset: (id: string, pageN
             const bytes = await options.readImage(assetId);
             images.set(assetId, bytes[0] === 0x89 ? await result.embedPng(bytes) : await result.embedJpg(bytes));
         }
+    let textFonts: TextFonts | null = null;
+    if (topic.pages.some(page => page.texts?.length)) {
+        if (!options.readFonts) throw new Error('Die Schriften für Textfelder fehlen.');
+        const files = await options.readFonts();
+        result.registerFontkit(fontkit);
+        // No kerning or ligatures: glyphs use their plain advances, as in the shared layout.
+        const features = {kern: false, liga: false, calt: false, clig: false};
+        // Embedded whole: fontkit's subsetting drops glyphs of these fonts, and they are subsets already (~150 KB).
+        textFonts = {sans: await result.embedFont(files.sans, {subset: false, features}), mono: await result.embedFont(files.mono, {subset: false, features})};
+    }
     for (const [pageIndex, page] of topic.pages.entries()) {
         const pageNotes = options.notes?.byPage.get(page.id) ?? [];
         const background = page.background;
@@ -196,6 +260,7 @@ export async function exportTopicPdf(topic: Topic, readAsset: (id: string, pageN
             }
             drawImages(target, page, offset, images);
             drawInk(target, page, offset);
+            if (textFonts) drawTexts(result, target, page, offset, textFonts);
             target.pushOperators(popGraphicsState());
             for (const note of pageNotes) {
                 if (exportPlacement(note.x, note.y).slice !== slice) continue;

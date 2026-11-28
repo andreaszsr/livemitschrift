@@ -236,16 +236,17 @@ class PageStore:
                 self._resources(db, identity, state)
                 for topic in state["notebook"]["topics"]:
                     for page in topic["pages"]:
-                        if page["strokes"] or page.get("images"):
-                            raise ProtocolError("Structure must not contain ink or images.")
+                        if page["strokes"] or page.get("images") or page.get("texts"):
+                            raise ProtocolError("Structure must not contain ink, images or text boxes.")
                         existing = db.execute("SELECT metadata FROM pages WHERE identity=? AND page_id=?", (identity, page["id"])).fetchone()
                         if existing:
                             old = json.loads(existing[0])
                             page["height"] = max(page["height"], old["height"])
                             page["nextOrder"] = max(page["nextOrder"], old["nextOrder"])
                             # Images are page content like ink; structure changes keep them.
-                            if old.get("images"):
-                                page["images"] = old["images"]
+                            for content in ("images", "texts"):
+                                if old.get(content):
+                                    page[content] = old[content]
                             db.execute("UPDATE pages SET metadata=? WHERE identity=? AND page_id=?", (encoded(page), identity, page["id"]))
                         else:
                             self._write_page(db, identity, page, head)
@@ -272,6 +273,16 @@ class PageStore:
                     page["nextOrder"] = max(page["nextOrder"], max((i["order"] + 1 for i in images), default=0))
                     if not page["images"]:
                         del page["images"]
+                if edit.insert_texts or edit.remove_texts:
+                    removed_texts = set(edit.remove_texts)
+                    texts = [t for t in page.get("texts", []) if t["id"] not in removed_texts]
+                    if any(t["id"] == box.id for t in texts for box in edit.insert_texts):
+                        raise ProtocolError("Conflicting text box identity.")
+                    texts.extend(t.model_dump(by_alias=True) for t in edit.insert_texts)
+                    page["texts"] = sorted(texts, key=lambda t: t["order"])
+                    page["nextOrder"] = max(page["nextOrder"], max((t["order"] + 1 for t in texts), default=0))
+                    if not page["texts"]:
+                        del page["texts"]
                 checked = Page.model_validate(page)
                 if sum(len(s.points) for s in checked.strokes) > MAX_POINTS or len(encoded(page).encode()) > MAX_PAGE_BYTES:
                     raise ProtocolError("Page ink limit reached.")

@@ -198,10 +198,11 @@ docker compose pull
 docker compose up -d --wait
 ```
 
-Release 0.3 adds page images. Update the server before the desktop app: a 0.2
-server rejects image uploads, and the app then reports that the server needs an
-update. A rollback to 0.2 keeps the database readable only while no page holds an
-image; otherwise restore the backup taken before the update.
+Release 0.3 adds page images and text boxes. Update the server before the
+desktop app: a 0.2 server rejects image uploads (the app then reports that the
+server needs an update) and text box edits. A rollback to 0.2 keeps the database
+readable only while no page holds an image or text box; otherwise restore the
+backup taken before the update.
 
 Never use `docker compose down --volumes` on a real installation: it deletes notes
 and certificates. For rollback use the previous image and, if schemas changed, its

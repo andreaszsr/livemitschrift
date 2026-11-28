@@ -2,7 +2,7 @@ import { validSyncPage, applyNotebookEvent, findPage, InkDocument, LaserPointer,
 import type { Notebook, NotebookEvent, NotebookSnapshot, NotePage, Topic, ViewPosition } from '@livemitschrift/core';
 import type { ExportNotes } from '@livemitschrift/pdf/export';
 import { NotebookPdfRenderer, PageThumbnails } from '@livemitschrift/pdf';
-import { addZoomLockAction, button, escapeHtml, icon, ImageLayer, Toolbar, ViewportZoom, zoomControls } from '@livemitschrift/ui';
+import { addZoomLockAction, button, escapeHtml, icon, ImageLayer, TextLayer, Toolbar, ViewportZoom, zoomControls } from '@livemitschrift/ui';
 import { PagedConnection } from './paged-connection.js';
 import type { ViewerState } from './viewer-state.js';
 import { followScrollTop } from './follow-position.js';
@@ -64,6 +64,8 @@ async function readPdf(asset: string, page = 1): Promise<Uint8Array> { const res
     throw new Error(`PDF nicht verfügbar (${response.status}).`); return new Uint8Array(await response.arrayBuffer()); }
 // Page images load straight from the server, below the ink canvas.
 const images = new ImageLayer(paper, element('page'), async asset => `/api/notebook/${identity}/image/${asset}`);
+// Text boxes above the ink; their links open in a new tab.
+const texts = new TextLayer(paper);
 // Private notes stay in this browser; see student-notes.ts. Accessing
 // localStorage itself can throw when site data is blocked.
 const noteStorage = ((): NoteStorage | null => { try { return localStorage; } catch { return null; } })();
@@ -112,6 +114,7 @@ function display(page: NotePage, y = positions[page.id] ?? 0, subscribe = true):
     renderer.invalidate();
     void pdf.set(page.background).then(() => { element('pdf-status').textContent = page.background ? `${page.background.name} · Folie ${page.background.pageNumber}` : 'Kein PDF-Hintergrund'; }).catch(error => notice(String(error)));
     images.render(page.images ?? []);
+    texts.render(page.texts ?? []);
     notesLayer.render(page);
     update();
     if (!element('drawer').hidden)
@@ -286,7 +289,10 @@ async function buildPdf(topic: Topic, noteOptions?: ExportNotes): Promise<void> 
         const bytes = await exportTopicPdf(confirmed, async (asset, page) => {
             controller.signal.throwIfAborted();
             return new Uint8Array(await (await read(`/api/notebook/${identity}/pdf/${asset}/page/${page ?? 1}`)).arrayBuffer());
-        }, {pagewiseAssets: true, notes: noteOptions, readImage: async asset => {
+        }, {pagewiseAssets: true, notes: noteOptions, readFonts: async () => {
+            const font = async (name: string) => new Uint8Array(await (await read(`/ui/fonts/${name}`)).arrayBuffer());
+            return {sans: await font('LiveMitschriftSans.ttf'), mono: await font('LiveMitschriftMono.ttf')};
+        }, readImage: async asset => {
             controller.signal.throwIfAborted();
             return new Uint8Array(await (await read(`/api/notebook/${identity}/image/${asset}`)).arrayBuffer());
         }});
@@ -474,7 +480,7 @@ function receive(message: NotebookSnapshot | NotebookEvent): void {
         renderer.redraw();
     }
     // Markers are placed relative to the page height.
-    if (message.type !== 'ink') { images.render(current.images ?? []); notesLayer.render(current); }
+    if (message.type !== 'ink') { images.render(current.images ?? []); texts.render(current.texts ?? []); notesLayer.render(current); }
     if (message.type !== 'ink' || message.operation.type !== 'stroke_points')
         update();
 }

@@ -165,6 +165,7 @@ impl Database {
         }
         tx.execute("DELETE FROM applied_edits WHERE page_id IN (SELECT id FROM pages WHERE topic_id=?1)", [topic])?;
         tx.execute("DELETE FROM strokes WHERE page_id IN (SELECT id FROM pages WHERE topic_id=?1)", [topic])?;
+        tx.execute("DELETE FROM texts WHERE page_id IN (SELECT id FROM pages WHERE topic_id=?1)", [topic])?;
         tx.execute("DELETE FROM images WHERE page_id IN (SELECT id FROM pages WHERE topic_id=?1)", [topic])?;
         tx.execute("DELETE FROM pages WHERE topic_id=?1", [topic])?;
         tx.execute("DELETE FROM topics WHERE id=?1", [topic])?;
@@ -187,6 +188,7 @@ impl Database {
         }
         tx.execute("DELETE FROM applied_edits WHERE page_id IN (SELECT id FROM pages WHERE document_id=?1)", [book])?;
         tx.execute("DELETE FROM strokes WHERE page_id IN (SELECT id FROM pages WHERE document_id=?1)", [book])?;
+        tx.execute("DELETE FROM texts WHERE page_id IN (SELECT id FROM pages WHERE document_id=?1)", [book])?;
         tx.execute("DELETE FROM images WHERE page_id IN (SELECT id FROM pages WHERE document_id=?1)", [book])?;
         for table in ["pages", "topics", "outbox", "sync_targets"] {
             tx.execute(&format!("DELETE FROM {table} WHERE document_id=?1"), [book])?;

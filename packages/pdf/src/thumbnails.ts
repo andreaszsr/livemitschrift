@@ -1,4 +1,4 @@
-import { drawStroke, notebookPdfPlacement } from '@livemitschrift/core';
+import { drawStroke, notebookPdfPlacement, textBoxLayout } from '@livemitschrift/core';
 import type { NotePage } from '@livemitschrift/core';
 import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist';
 import { loadPdfDocument } from './index.js';
@@ -109,6 +109,15 @@ export class PageThumbnails {
       } catch { /* keep the rest of the preview */ }
     }
     for (const stroke of page.strokes) drawStroke(context, stroke, 0, 0, height);
+    // Text boxes with the shared layout and the bundled fonts (loaded by the stylesheet).
+    context.fontKerning = 'none';
+    for (const box of page.texts ?? []) {
+      if (box.y > height) continue;
+      const layout = textBoxLayout(box);
+      context.font = `${layout.fontSize}px "${box.code ? 'LiveMitschrift Mono' : 'LiveMitschrift Sans'}", sans-serif`;
+      context.fillStyle = box.color;
+      layout.lines.forEach((line, index) => context.fillText(line, box.x, box.y + index * layout.lineHeight + layout.baseline));
+    }
     canvas.dataset.previewReady = 'true';
   }
 }
