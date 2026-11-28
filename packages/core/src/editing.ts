@@ -1,5 +1,6 @@
 import type { Point, Stroke } from "./protocol.js";
 import type { PageEdit } from "./notebook.js";
+import type { PageImage } from "./images.js";
 import { createStrokeId } from "./session.js";
 export function hitStroke(stroke: Stroke, from: Point, to: Point, radius: number): boolean {
     const distance = (p: Point, a: Point, b: Point): number => {
@@ -29,9 +30,10 @@ export class EditHistory {
     private future: HistoryEntry[] = [];
     get canUndo(): boolean { return this.past.length > 0; }
     get canRedo(): boolean { return this.future.length > 0; }
-    record(pageId: string, height: number, insert: Stroke[], removed: Stroke[]): PageEdit {
-        const forward = this.edit(pageId, height, insert, removed.map(stroke => stroke.id));
-        const backward = this.edit(pageId, height, removed, insert.map(stroke => stroke.id));
+    /** Record one undoable step; image changes are optional and travel in the same edit. */
+    record(pageId: string, height: number, insert: Stroke[], removed: Stroke[], images: {insert: PageImage[]; removed: PageImage[]} = {insert: [], removed: []}): PageEdit {
+        const forward = this.edit(pageId, height, insert, removed.map(stroke => stroke.id), images.insert, images.removed.map(image => image.id));
+        const backward = this.edit(pageId, height, removed, insert.map(stroke => stroke.id), images.removed, images.insert.map(image => image.id));
         this.past.push({ forward, backward });
         if (this.past.length > 200)
             this.past.shift();
@@ -42,5 +44,10 @@ export class EditHistory {
         return null; this.future.push(entry); return { ...structuredClone(entry.backward), id: createStrokeId() }; }
     redo(): PageEdit | null { const entry = this.future.pop(); if (!entry)
         return null; this.past.push(entry); return { ...structuredClone(entry.forward), id: createStrokeId() }; }
-    private edit(pageId: string, height: number, insert: Stroke[], remove: string[]): PageEdit { return { id: createStrokeId(), pageId, height, insert: structuredClone(insert), remove: [...remove] }; }
+    private edit(pageId: string, height: number, insert: Stroke[], remove: string[], insertImages: PageImage[], removeImages: string[]): PageEdit {
+        const edit: PageEdit = { id: createStrokeId(), pageId, height, insert: structuredClone(insert), remove: [...remove] };
+        // Stroke-only edits keep their previous shape.
+        if (insertImages.length || removeImages.length) { edit.insertImages = structuredClone(insertImages); edit.removeImages = [...removeImages]; }
+        return edit;
+    }
 }

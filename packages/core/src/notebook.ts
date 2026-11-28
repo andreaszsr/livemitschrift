@@ -1,5 +1,7 @@
 import type { Operation, PageSize, PdfBackground, Point, Stroke } from "./protocol.js";
 import { validPdfBackground } from "./pdf.js";
+import { MAX_PAGE_IMAGES, validPageImage } from "./images.js";
+import type { PageImage } from "./images.js";
 export const MAX_DOCUMENT_HEIGHT = 1000000000;
 export const MAX_NOTEBOOK_BYTES = 16000000;
 export const MAX_NOTEBOOK_POINTS = 2000000;
@@ -9,6 +11,8 @@ export interface NotePage extends PageSize {
     title: string;
     background: PdfBackground | null;
     strokes: Stroke[];
+    /** Absent on pages without images (and from older clients). */
+    images?: PageImage[];
     nextOrder: number;
 }
 export interface Topic {
@@ -31,6 +35,9 @@ export interface PageEdit {
     pageId: string;
     insert: Stroke[];
     remove: string[];
+    /** Image changes; absent when an edit touches strokes only, so such edits stay readable for older servers. */
+    insertImages?: PageImage[];
+    removeImages?: string[];
     height: number;
 }
 export type NotebookEvent = {
@@ -88,10 +95,16 @@ export function validNoteStroke(value: unknown, height = MAX_DOCUMENT_HEIGHT): v
         && Array.isArray(value.points) && value.points.length > 0 && value.points.length <= 100000 && value.points.every(point => validNotePoint(point, height));
 }
 export function validPageEdit(value: unknown): value is PageEdit {
-    return record(value) && validIdentity(value.id) && validIdentity(value.pageId) && validHeight(value.height)
-        && Array.isArray(value.insert) && value.insert.length <= 1000 && value.insert.every(stroke => validNoteStroke(stroke, value.height as number) && stroke.complete)
+    if (!record(value) || !validIdentity(value.id) || !validIdentity(value.pageId) || !validHeight(value.height))
+        return false;
+    const height = value.height as number;
+    const insertImages: unknown = value.insertImages ?? [], removeImages: unknown = value.removeImages ?? [];
+    return Array.isArray(value.insert) && value.insert.length <= 1000 && value.insert.every(stroke => validNoteStroke(stroke, height) && stroke.complete)
         && Array.isArray(value.remove) && value.remove.length <= 1000 && value.remove.every(validIdentity)
-        && new Set(value.insert.map(stroke => stroke.id)).size === value.insert.length && new Set(value.remove).size === value.remove.length;
+        && new Set(value.insert.map(stroke => stroke.id)).size === value.insert.length && new Set(value.remove).size === value.remove.length
+        && Array.isArray(insertImages) && insertImages.length <= MAX_PAGE_IMAGES && insertImages.every(image => validPageImage(image, height))
+        && Array.isArray(removeImages) && removeImages.length <= MAX_PAGE_IMAGES && removeImages.every(validIdentity)
+        && new Set(insertImages.map(image => (image as PageImage).id)).size === insertImages.length && new Set(removeImages).size === removeImages.length;
 }
 export function validNotebookSnapshot(value: unknown): value is NotebookSnapshot {
     if (!record(value) || value.type !== "notebook" || !record(value.notebook) || !validIdentity(value.notebook.id)
@@ -111,6 +124,8 @@ export function validNotebookSnapshot(value: unknown): value is NotebookSnapshot
                 || (page.background != null && !validPdfBackground(page.background, MAX_NOTEBOOK_PAGES)) || !Array.isArray(page.strokes) || page.strokes.length > 50000)
                 return false;
             ids.add(page.id);
+            if (page.images !== undefined && !validPageImages(page.images, page.height as number, page.nextOrder as number))
+                return false;
             const strokes = new Set<string>(), orders = new Set<number>();
             for (let index = 0; index < page.strokes.length; index++) {
                 const stroke: unknown = page.strokes[index];
@@ -129,6 +144,17 @@ export function validNotebookSnapshot(value: unknown): value is NotebookSnapshot
     }
     return current !== undefined && value.position.y <= current.height && (value.position.focusY == null
         || (typeof value.position.focusY === "number" && Number.isFinite(value.position.focusY) && value.position.focusY >= 0 && value.position.focusY <= current.height));
+}
+function validPageImages(value: unknown, height: number, nextOrder: number): boolean {
+    if (!Array.isArray(value) || value.length > MAX_PAGE_IMAGES)
+        return false;
+    const ids = new Set<string>();
+    for (const image of value) {
+        if (!validPageImage(image, height) || ids.has(image.id) || image.order >= nextOrder)
+            return false;
+        ids.add(image.id);
+    }
+    return true;
 }
 export function parseNotebookMessage(text: string): NotebookMessage {
     const value: unknown = JSON.parse(text);
@@ -186,6 +212,19 @@ export function applyNotebookEvent(notebook: Notebook, event: NotebookEvent): vo
             page.nextOrder = Math.max(page.nextOrder, stroke.order! + 1);
         }
         page.strokes = next.sort((a, b) => a.order! - b.order!);
+        if (event.edit.insertImages?.length || event.edit.removeImages?.length) {
+            const removed = new Set(event.edit.removeImages ?? []);
+            const images = (page.images ?? []).filter(image => !removed.has(image.id));
+            for (const image of event.edit.insertImages ?? []) {
+                if (images.some(existing => existing.id === image.id))
+                    throw new Error("Conflicting image identity.");
+                images.push(structuredClone(image));
+                page.nextOrder = Math.max(page.nextOrder, image.order + 1);
+            }
+            if (images.length > MAX_PAGE_IMAGES)
+                throw new Error("Too many images on this page.");
+            page.images = images.sort((a, b) => a.order - b.order);
+        }
         page.height = Math.max(page.height, event.edit.height);
         return;
     }
