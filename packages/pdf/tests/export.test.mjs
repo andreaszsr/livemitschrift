@@ -86,3 +86,44 @@ test('reader notes become PDF text annotations on the right slice, optionally wi
     const without=await PDFDocument.load(await exportTopicPdf({id:'t',title:'Notes',pages:[first,second]},async()=>{throw Error('no PDF');}));
     assert.equal(without.getPageCount(),2);
 });
+
+/** A valid 2×2 RGB PNG, built with zlib so pdf-lib can embed it. */
+async function tinyPng() {
+    const {deflateSync, crc32} = await import('node:zlib');
+    const chunk = (type, data) => {
+        const length = Buffer.alloc(4); length.writeUInt32BE(data.length);
+        const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+        const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(body) >>> 0);
+        return Buffer.concat([length, body, crc]);
+    };
+    const header = Buffer.alloc(13); header.writeUInt32BE(2, 0); header.writeUInt32BE(2, 4); header[8] = 8; header[9] = 2;
+    const rows = Buffer.from([0, 255, 0, 0, 0, 0, 255, 0, 0, 255, 0, 255, 0, 0, 0, 0]);
+    return new Uint8Array(Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', header), chunk('IDAT', deflateSync(rows)), chunk('IEND', Buffer.alloc(0))]));
+}
+
+test('page images are embedded once, below the ink, on the slices they cover', async () => {
+    const {PDFName, PDFDict} = await import('pdf-lib');
+    const png = await tinyPng(), asset = 'c'.repeat(64);
+    const first = page(), second = page(); second.id = 'second';
+    // One image on the first slice, the same file again crossing into the second slice.
+    first.images = [{id: 'a', assetId: asset, x: 100, y: 100, width: 300, height: 200, order: 0},
+        {id: 'b', assetId: asset, x: 100, y: EXPORT_SLICE_HEIGHT - 50, width: 300, height: 200, order: 1}];
+    first.nextOrder = 2;
+    assert.equal(exportContentHeight(first), EXPORT_SLICE_HEIGHT + 150);
+    let reads = 0;
+    const bytes = await exportTopicPdf({id: 't', title: 'Images', pages: [first, second]}, async () => { throw Error('no PDF'); },
+        {readImage: async id => { reads++; assert.equal(id, asset); return png; }});
+    assert.equal(reads, 1, 'each file is read and embedded once');
+    const document = await PDFDocument.load(bytes);
+    const imagesOn = target => {
+        const objects = target.node.Resources()?.lookupMaybe(PDFName.of('XObject'), PDFDict);
+        // Distinct image objects: one name per drawing, all pointing to the single embedded file.
+        return objects ? new Set(objects.keys().map(key => objects.get(key)).filter(ref => document.context.lookup(ref).dict?.get(PDFName.of('Subtype'))?.toString() === '/Image').map(String)).size : 0;
+    };
+    const pages = document.getPages();
+    assert.equal(pages.length, 3);
+    assert.deepEqual(pages.map(imagesOn), [1, 1, 0]);
+    assert.equal(document.context.enumerateIndirectObjects().filter(([, object]) => object.dict?.get(PDFName.of('Subtype'))?.toString() === '/Image').length, 1);
+    const without = await PDFDocument.load(await exportTopicPdf({id: 't', title: 'Images', pages: [first]}, async () => { throw Error('no PDF'); }));
+    assert.deepEqual(without.getPages().map(imagesOn), [0, 0], 'without a reader the export stays as before');
+});

@@ -2,7 +2,7 @@ import { validSyncPage, applyNotebookEvent, findPage, InkDocument, LaserPointer,
 import type { Notebook, NotebookEvent, NotebookSnapshot, NotePage, Topic, ViewPosition } from '@livemitschrift/core';
 import type { ExportNotes } from '@livemitschrift/pdf/export';
 import { NotebookPdfRenderer, PageThumbnails } from '@livemitschrift/pdf';
-import { addZoomLockAction, button, escapeHtml, icon, Toolbar, ViewportZoom, zoomControls } from '@livemitschrift/ui';
+import { addZoomLockAction, button, escapeHtml, icon, ImageLayer, Toolbar, ViewportZoom, zoomControls } from '@livemitschrift/ui';
 import { PagedConnection } from './paged-connection.js';
 import type { ViewerState } from './viewer-state.js';
 import { followScrollTop } from './follow-position.js';
@@ -62,6 +62,8 @@ const renderer = new ViewportInkRenderer(element<HTMLCanvasElement>('page'), pap
 } });
 async function readPdf(asset: string, page = 1): Promise<Uint8Array> { const response = await fetch(`/api/notebook/${identity}/pdf/${asset}/page/${page}`); if (!response.ok)
     throw new Error(`PDF nicht verfügbar (${response.status}).`); return new Uint8Array(await response.arrayBuffer()); }
+// Page images load straight from the server, below the ink canvas.
+const images = new ImageLayer(paper, element('page'), async asset => `/api/notebook/${identity}/image/${asset}`);
 // Private notes stay in this browser; see student-notes.ts. Accessing
 // localStorage itself can throw when site data is blocked.
 const noteStorage = ((): NoteStorage | null => { try { return localStorage; } catch { return null; } })();
@@ -109,6 +111,7 @@ function display(page: NotePage, y = positions[page.id] ?? 0, subscribe = true):
     viewport.scrollTop = y * paper.getBoundingClientRect().width / page.width;
     renderer.invalidate();
     void pdf.set(page.background).then(() => { element('pdf-status').textContent = page.background ? `${page.background.name} · Folie ${page.background.pageNumber}` : 'Kein PDF-Hintergrund'; }).catch(error => notice(String(error)));
+    images.render(page.images ?? []);
     notesLayer.render(page);
     update();
     if (!element('drawer').hidden)
@@ -283,7 +286,10 @@ async function buildPdf(topic: Topic, noteOptions?: ExportNotes): Promise<void> 
         const bytes = await exportTopicPdf(confirmed, async (asset, page) => {
             controller.signal.throwIfAborted();
             return new Uint8Array(await (await read(`/api/notebook/${identity}/pdf/${asset}/page/${page ?? 1}`)).arrayBuffer());
-        }, {pagewiseAssets: true, notes: noteOptions});
+        }, {pagewiseAssets: true, notes: noteOptions, readImage: async asset => {
+            controller.signal.throwIfAborted();
+            return new Uint8Array(await (await read(`/api/notebook/${identity}/image/${asset}`)).arrayBuffer());
+        }});
         controller.signal.throwIfAborted();
         exportUrl = URL.createObjectURL(new Blob([bytes.slice().buffer as ArrayBuffer], {type: 'application/pdf'}));
         link.href = exportUrl; link.download = exportFilename(topic.title); link.hidden = false;
@@ -392,6 +398,10 @@ function pagePicker(pages: NotePage[], index: number): void {
         const value: unknown = await response.json();
         if (!validSyncPage(value) || value.id !== page.id) throw new Error('Ungültige Vorschau.');
         return value;
+    }, async asset => {
+        const response = await fetch(`/api/notebook/${identity}/image/${asset}`);
+        if (!response.ok) throw new Error('Bild nicht verfügbar.');
+        return response.blob();
     });
     view.addEventListener('close', () => previews.dispose(), { once: true });
     const grid = document.createElement('div');
@@ -464,7 +474,7 @@ function receive(message: NotebookSnapshot | NotebookEvent): void {
         renderer.redraw();
     }
     // Markers are placed relative to the page height.
-    if (message.type !== 'ink') notesLayer.render(current);
+    if (message.type !== 'ink') { images.render(current.images ?? []); notesLayer.render(current); }
     if (message.type !== 'ink' || message.operation.type !== 'stroke_points')
         update();
 }

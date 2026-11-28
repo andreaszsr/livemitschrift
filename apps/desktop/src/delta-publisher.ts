@@ -1,5 +1,5 @@
 import { MAX_BATCH_POINTS, MAX_SYNC_PAGE_BYTES, notebookPages, notebookStructure, syncFrames } from '@livemitschrift/core';
-import type { Notebook, NotebookEvent, NotebookSnapshot, Point } from '@livemitschrift/core';
+import type { Notebook, NotebookEvent, NotebookSnapshot, PageEdit, Point } from '@livemitschrift/core';
 import { accessError, publisherKey, publisherServer } from './publisher-access.js';
 import type { SharingState } from './sharing-state.js';
 
@@ -41,7 +41,8 @@ export class DeltaPublisher {
     private pending: {pageId: string; strokeId: string; points: Point[]} | null = null;
     private assets = new Set<string>();
     constructor(private readonly snapshot: () => NotebookSnapshot, private readonly secret: string,
-        private readonly readPdf: (id: string) => Promise<Uint8Array>, private readonly state: (state: SharingState) => void,
+        private readonly readPdf: (id: string) => Promise<Uint8Array>, private readonly readImage: (id: string) => Promise<Uint8Array>,
+        private readonly state: (state: SharingState) => void,
         private readonly durable: DeltaSync) {}
 
     start(server: string, key: string): void {
@@ -57,6 +58,9 @@ export class DeltaPublisher {
 
     publish(event: NotebookEvent): void {
         if (!this.acceptingInk) return;
+        // Image changes travel only as durable commits, after their files are uploaded;
+        // readers would otherwise reference an image the server does not have yet.
+        if (event.type === 'edit' && (event.edit.insertImages?.length || event.edit.removeImages?.length)) return;
         if (event.type === 'ink' && event.operation.type === 'stroke_points') {
             if (this.pending && (this.pending.pageId !== event.pageId || this.pending.strokeId !== event.operation.stroke_id)) this.flushPoints();
             this.pending ??= {pageId: event.pageId, strokeId: event.operation.stroke_id, points: []};
@@ -122,20 +126,28 @@ export class DeltaPublisher {
         this.enqueue(value);
         return waiting;
     }
+    /** Upload every PDF and image a notebook references that the server does not have yet. */
     private async uploadAssets(notebook: Notebook, generation: number): Promise<void> {
-        for (const asset of new Set(notebookPages(notebook).flatMap(page => page.background ? [page.background.assetId] : []))) {
-            if (this.assets.has(asset)) continue;
-            const bytes = await this.readPdf(asset);
-            if (generation !== this.generation) throw new Error('Connection replaced.');
-            const controller = this.controller!;
-            const timeout = window.setTimeout(() => controller.abort(), 30000);
-            try {
-                const response = await fetch(new URL(`/api/sync/pdf/${asset}`, this.base!), {method: 'POST', redirect: 'error', headers: {Authorization: `Bearer ${this.secret}`, 'Content-Type': 'application/pdf', 'X-LiveMitschrift-Publisher-Key': this.key}, body: bytes.slice().buffer as ArrayBuffer, signal: controller.signal});
-                if ([400, 401, 403, 410, 413].includes(response.status)) throw new SyncProtocolError(`PDF-Übertragung abgelehnt (${response.status}); bitte Zugangsschlüssel und PDF prüfen.`);
-                if (!response.ok) throw new Error(`PDF-Übertragung fehlgeschlagen (${response.status}).`);
-                this.assets.add(asset);
-            } finally {window.clearTimeout(timeout);}
-        }
+        const pages = notebookPages(notebook);
+        for (const asset of new Set(pages.flatMap(page => page.background ? [page.background.assetId] : []))) await this.upload(asset, 'pdf', generation);
+        await this.uploadImages(pages.flatMap(page => (page.images ?? []).map(image => image.assetId)), generation);
+    }
+    private async uploadImages(assets: string[], generation: number): Promise<void> {
+        for (const asset of new Set(assets)) await this.upload(asset, 'image', generation);
+    }
+    private async upload(asset: string, kind: 'pdf' | 'image', generation: number): Promise<void> {
+        if (this.assets.has(asset)) return;
+        const bytes = await (kind === 'pdf' ? this.readPdf(asset) : this.readImage(asset));
+        if (generation !== this.generation) throw new Error('Connection replaced.');
+        const controller = this.controller!, label = kind === 'pdf' ? 'PDF' : 'Bild';
+        const timeout = window.setTimeout(() => controller.abort(), 30000);
+        try {
+            const response = await fetch(new URL(`/api/sync/${kind}/${asset}`, this.base!), {method: 'POST', redirect: 'error', headers: {Authorization: `Bearer ${this.secret}`, 'Content-Type': kind === 'pdf' ? 'application/pdf' : 'application/octet-stream', 'X-LiveMitschrift-Publisher-Key': this.key}, body: bytes.slice().buffer as ArrayBuffer, signal: controller.signal});
+            if (response.status === 404 && kind === 'image') throw new SyncProtocolError('Der Server unterstützt noch keine Bilder; bitte den Server auf Version 0.3 aktualisieren.');
+            if ([400, 401, 403, 410, 413].includes(response.status)) throw new SyncProtocolError(`${label}-Übertragung abgelehnt (${response.status}); bitte Zugangsschlüssel und ${label} prüfen.`);
+            if (!response.ok) throw new Error(`${label}-Übertragung fehlgeschlagen (${response.status}).`);
+            this.assets.add(asset);
+        } finally {window.clearTimeout(timeout);}
     }
     private async connect(): Promise<void> {
         if (!this.enabled || !this.base) return;
@@ -203,12 +215,14 @@ export class DeltaPublisher {
                 if (generation !== this.generation || !this.ready) return;
                 if (!next) {if (structureVersion !== this.structureVersion) continue; break;}
                 if (next.sequence !== this.sequence + 1) {this.forceRecovery = true; this.fail(1013); return;}
-                const change = next.change as {type: string; notebook?: Notebook};
+                const change = next.change as {type: string; notebook?: Notebook; edit?: PageEdit};
                 if (change.type === 'replace') {this.forceRecovery = true; this.fail(1013); return;}
                 if (change.type === 'structure' && change.notebook) {
                     this.acceptingInk = false; this.needsPreview = true; this.flushPoints();
                     await this.uploadAssets(change.notebook, generation);
                 }
+                if (change.type === 'edit' && change.edit?.insertImages?.length)
+                    await this.uploadImages(change.edit.insertImages.map(image => image.assetId), generation);
                 this.flushPoints();
                 const ack = await this.request({type: 'commit', ...next}, 'ack');
                 if (ack.sequence !== next.sequence) throw new SyncProtocolError('Unerwartete Änderungsbestätigung.');

@@ -1,5 +1,5 @@
 import { PDFDocument, PDFHexString, PDFName, PDFNumber, PDFString, StandardFonts, LineCapStyle, clip, endPath, popGraphicsState, pushGraphicsState, rectangle, rgb, degrees } from 'pdf-lib';
-import type { PDFFont, PDFPage } from 'pdf-lib';
+import type { PDFFont, PDFImage, PDFPage } from 'pdf-lib';
 import { HIGHLIGHTER_OPACITY, notebookPdfPlacement, pressureWidth } from '@livemitschrift/core';
 import type { NotePage, Topic } from '@livemitschrift/core';
 
@@ -14,6 +14,7 @@ export function exportContentHeight(page: NotePage): number {
     let height = page.background ? notebookPdfPlacement(page.background).height : 0;
     for (const stroke of page.strokes) for (const point of stroke.points)
         height = Math.max(height, point.y + (stroke.highlighter ? stroke.width : pressureWidth(stroke.width, point.pressure)) / 2 + 16);
+    for (const image of page.images ?? []) height = Math.max(height, image.y + image.height);
     return Math.max(1, height);
 }
 
@@ -104,6 +105,16 @@ function addNoteText(result: PDFDocument, font: PDFFont, bold: PDFFont, title: s
     }
 }
 
+/** Page images below the ink, in the same document-to-slice transform; the page clip trims other slices. */
+function drawImages(target: PDFPage, page: NotePage, offset: number, embedded: Map<string, PDFImage>): void {
+    for (const image of page.images ?? []) {
+        if (image.y + image.height < offset || image.y > offset + EXPORT_SLICE_HEIGHT) continue;
+        const file = embedded.get(image.assetId);
+        if (!file) continue;
+        target.drawImage(file, {x: MARGIN + image.x * SCALE, y: A4[1] - MARGIN - (image.y + image.height - offset) * SCALE, width: image.width * SCALE, height: image.height * SCALE});
+    }
+}
+
 function drawInk(target: PDFPage, page: NotePage, offset: number): void {
     const y = (value: number) => A4[1] - MARGIN - (value - offset) * SCALE;
     for (const stroke of page.strokes) {
@@ -131,7 +142,7 @@ function drawInk(target: PDFPage, page: NotePage, offset: number): void {
 
 /** Vector export; PDF backgrounds and ink share the editor's document transform. */
 export async function exportTopicPdf(topic: Topic, readAsset: (id: string, pageNumber?: number) => Promise<Uint8Array>,
-    options: {pagewiseAssets?: boolean; notes?: ExportNotes} = {}): Promise<Uint8Array> {
+    options: {pagewiseAssets?: boolean; notes?: ExportNotes; readImage?: (assetId: string) => Promise<Uint8Array>} = {}): Promise<Uint8Array> {
     // Notes below the ink still need their slice.
     const contentHeight = (page: NotePage): number => Math.max(exportContentHeight(page),
         ...(options.notes?.byPage.get(page.id) ?? []).map(note => note.y + NOTE_ICON / SCALE));
@@ -141,6 +152,13 @@ export async function exportTopicPdf(topic: Topic, readAsset: (id: string, pageN
     result.setTitle(topic.title); result.setCreator('LiveMitschrift');
     const documents = new Map<string, PDFDocument>();
     const fonts = options.notes?.printable ? {regular: await result.embedFont(StandardFonts.Helvetica), bold: await result.embedFont(StandardFonts.HelveticaBold)} : null;
+    // Each image file is embedded once and may be drawn on several pages and slices.
+    const images = new Map<string, PDFImage>();
+    if (options.readImage)
+        for (const assetId of new Set(topic.pages.flatMap(page => (page.images ?? []).map(image => image.assetId)))) {
+            const bytes = await options.readImage(assetId);
+            images.set(assetId, bytes[0] === 0x89 ? await result.embedPng(bytes) : await result.embedJpg(bytes));
+        }
     for (const [pageIndex, page] of topic.pages.entries()) {
         const pageNotes = options.notes?.byPage.get(page.id) ?? [];
         const background = page.background;
@@ -176,6 +194,7 @@ export async function exportTopicPdf(topic: Topic, readAsset: (id: string, pageN
                 target.drawPage(embedded, { x: x + (rotation >= 180 ? width : 0), y: bottom + (rotation === 90 || rotation === 180 ? height : 0),
                     width: sourceWidth * factor, height: sourceHeight * factor, rotate: degrees(-rotation) });
             }
+            drawImages(target, page, offset, images);
             drawInk(target, page, offset);
             target.pushOperators(popGraphicsState());
             for (const note of pageNotes) {

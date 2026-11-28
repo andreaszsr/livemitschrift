@@ -4,10 +4,9 @@ import type { InputHandlers, InputObservation, NotebookSnapshot, Notebook, NoteP
 import { SelectionOverlay } from './selection-overlay.js';
 import { LinePreview } from './line-preview.js';
 import { ShapePreview } from './shape-preview.js';
-import { ImageLayer } from './image-layer.js';
 import { imageFile, prepareImage } from './image-import.js';
 import { loadPdfDocument, NotebookPdfRenderer, PageThumbnails } from '@livemitschrift/pdf';
-import { button, escapeHtml, icon, Toolbar, toolbarPreferences, ViewportZoom, zoomControls } from '@livemitschrift/ui';
+import { button, escapeHtml, icon, ImageLayer, Toolbar, toolbarPreferences, ViewportZoom, zoomControls } from '@livemitschrift/ui';
 import type { ToolbarAction } from '@livemitschrift/ui';
 import { NativePenInput, nativeInputAvailable } from './native-input.js';
 import { closeApp, desktopStorageAvailable, openLiveViewer, readImageAsset, readPdfAsset, storeImageAsset, storePdfAsset, toggleFullscreen } from './local-store.js';
@@ -149,7 +148,8 @@ class Editor {
         this.selectionOverlay = new SelectionOverlay(this.paper, this.pageSize);
         this.linePreview = new LinePreview(this.paper, this.pageSize);
         this.shapePreview = new ShapePreview(this.paper, this.pageSize);
-        this.images = new ImageLayer(this.paper, this.canvas, readImageAsset);
+        // Local image files become blob URLs; they are immutable, so each is read once per session.
+        this.images = new ImageLayer(this.paper, this.canvas, async assetId => URL.createObjectURL(new Blob([(await readImageAsset(assetId)).slice().buffer])));
         this.pdf = new NotebookPdfRenderer(element<HTMLCanvasElement>('pdf-background'), readPdfAsset, error => { element('pdf-status').textContent = String(error); report(`PDF-Darstellung fehlgeschlagen: ${String(error)}`); });
         this.toolbar = new Toolbar(element('toolbar'), this.writingIds, true,
             preferences => { this.preference('toolbar-writing', JSON.stringify(preferences)); this.updateToolbar(); },
@@ -666,7 +666,7 @@ class Editor {
                 this.sharingStates.set(id,state);
                 if (this.notebook.id===id) {this.sharingState=state;this.updateSharing();this.updateToolbar();}
             };
-            publisher = new DeltaPublisher(snapshot, loaded.secret, readPdfAsset, state, {status:()=>syncStatus(id),checkpoint:()=>syncCheckpoint(id),outgoing:after=>outgoingChanges(id,after),acknowledge:sequence=>acknowledgeChanges(id,sequence),preview:()=>this.notebook.id===id ? snapshot() : null});
+            publisher = new DeltaPublisher(snapshot, loaded.secret, readPdfAsset, readImageAsset, state, {status:()=>syncStatus(id),checkpoint:()=>syncCheckpoint(id),outgoing:after=>outgoingChanges(id,after),acknowledge:sequence=>acknowledgeChanges(id,sequence),preview:()=>this.notebook.id===id ? snapshot() : null});
             this.publishers.set(id,publisher);
         }
         return publisher;
@@ -776,7 +776,7 @@ class Editor {
     private async exportPdf(topic: Topic, folder: string, name: string): Promise<boolean> {
         await this.requireSaved();
         const {exportTopicPdf} = await import('@livemitschrift/pdf/export');
-        const pdf = await exportTopicPdf(topic, readPdfAsset);
+        const pdf = await exportTopicPdf(topic, readPdfAsset, {readImage: readImageAsset});
         if (await exportPdfToFolder(folder, name, false, pdf) === 'saved') return true;
         if (!await this.confirmDelete('Datei ersetzen?', `„${name}.pdf“ gibt es im Exportordner bereits.`, undefined, 'Ersetzen')) return false;
         return await exportPdfToFolder(folder, name, true, pdf) === 'saved';
@@ -1591,7 +1591,7 @@ class Editor {
         } };
         jump.addEventListener('keydown', event => { if (event.key === 'Enter')
             go(); });
-        const previews = new PageThumbnails(dialog, readPdfAsset);
+        const previews = new PageThumbnails(dialog, readPdfAsset, false, undefined, async assetId => new Blob([(await readImageAsset(assetId)).slice().buffer]));
         dialog.addEventListener('close', () => previews.dispose(), { once: true });
         const grid = document.createElement('div');
         grid.className = 'thumbnails';

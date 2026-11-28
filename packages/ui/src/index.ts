@@ -333,3 +333,4 @@ export { ViewportZoom, zoomPreferences, zoomAnchor, zoomScrollDelta, addZoomLock
 export type { ZoomPreferences } from './zoom.js';
 export { linkParts, linkedText } from './links.js';
 export type { TextPart } from './links.js';
+export { ImageLayer } from './image-layer.js';

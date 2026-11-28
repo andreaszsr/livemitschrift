@@ -452,7 +452,10 @@ fn library(webview:&Webview<Wry>,directory:&Path)->TestResult<()> {
     wait_for(webview,"!document.querySelector('.image-selection').hidden")?;
     evaluate(webview,"(() => {const v=document.getElementById('viewport').getBoundingClientRect();document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'c',metaKey:true,bubbles:true}));window.dispatchEvent(new CustomEvent('livemitschrift-native-input',{detail:{phase:'move',x:v.left+520,y:v.top+320,pointerType:'mouse',pressure:0,buttons:0,button:-1,eraser:false}}));document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'v',metaKey:true,bubbles:true}));return true;})()")?;
     wait_for(webview,"(() => {const i=document.querySelectorAll('.image-layer img'),v=document.getElementById('viewport').getBoundingClientRect();return i.length===3&&[...i].some(e=>{const r=e.getBoundingClientRect();return Math.abs(r.left+r.width/2-v.left-520)<3&&Math.abs(r.top+r.height/2-v.top-320)<3;});})()")?;
-    println!("IMAGES_PASS file insert, lasso move and corner resize, undo, delete, clipboard paste and Finder-style drop, copy and paste under the pointer");
+    // The live reader receives the images once their files are uploaded and the edits committed.
+    wait_for(webview,"document.getElementById('share-status').textContent==='Live · Serverstand bestätigt'")?;
+    wait_for(reader.as_ref(),"(() => {const i=[...document.querySelectorAll('.image-layer img')];return i.length===3&&i.every(e=>e.complete&&e.naturalWidth>0&&!e.classList.contains('image-loading'));})()")?;
+    println!("IMAGES_PASS file insert, lasso move and corner resize, undo, delete, clipboard paste and Finder-style drop, copy and paste under the pointer, live reader shows uploaded images");
     println!("LIBRARY_PASS native vector PDF export, portable backup, safe copied restore, rename, durable publish and HTTP reader");
     fs::write(directory.join("library-passed"),"ready")?;Ok(())
 }
