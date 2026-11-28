@@ -12,13 +12,13 @@ test('metrics come from the bundled fonts: monospace has one advance, sans varie
   assert.ok(MONO_METRICS.ascent > 0 && MONO_METRICS.descent < 0);
 });
 
-test('normal text wraps at spaces, keeps explicit breaks and splits only overlong words', () => {
+test('lines break only at spaces: words are never split, an overlong word stays on its own line', () => {
   const width = Math.max(measureText('Skript zur', false, TEXT_FONT_SIZE.medium), measureText('Vorlesung', false, TEXT_FONT_SIZE.medium)) + 1;
   assert.ok(measureText('Skript zur Vorlesung', false, TEXT_FONT_SIZE.medium) > width);
-  assert.deepEqual(layoutText('Skript zur Vorlesung\nhttps://example.org/sehr/langer/pfad', 'medium', false, width).lines.slice(0, 2), ['Skript zur', 'Vorlesung']);
-  const long = layoutText('https://example.org/sehr/langer/pfad', 'medium', false, width);
-  assert.ok(long.lines.length > 1 && long.lines.every(line => measureText(line, false, 28) <= width + 1e-6));
-  assert.equal(long.lines.join(''), 'https://example.org/sehr/langer/pfad');
+  assert.deepEqual(layoutText('Skript zur Vorlesung', 'medium', false, width).lines, ['Skript zur', 'Vorlesung']);
+  const narrow = measureText('asdfasd', false, TEXT_FONT_SIZE.medium) - 5;
+  assert.deepEqual(layoutText('asdfasd sdfadf', 'medium', false, narrow).lines, ['asdfasd', 'sdfadf']);
+  assert.deepEqual(layoutText('Siehe https://example.org/sehr/langer/pfad dort', 'medium', false, width).lines, ['Siehe', 'https://example.org/sehr/langer/pfad', 'dort']);
   assert.deepEqual(layoutText('a\n\nb', 'small', false, 500).lines, ['a', '', 'b']);
   // Start offsets locate each line in the text, also after dropped spaces and explicit breaks.
   const text = 'Skript zur Vorlesung\nhttps://example.org/sehr/langer/pfad', layout = layoutText(text, 'medium', false, width);
@@ -26,11 +26,12 @@ test('normal text wraps at spaces, keeps explicit breaks and splits only overlon
   assert.deepEqual(layoutText('a\n\nb', 'small', false, 500).starts, [0, 2, 3]);
 });
 
-test('code wraps at any character and keeps spaces; height and baseline follow the line count', () => {
-  const columns = 10, width = measureText('x'.repeat(columns), true, TEXT_FONT_SIZE.small);
-  const layout = layoutText('    if (x) {\n        y();', 'small', true, width);
-  assert.deepEqual(layout.lines, ['    if (x)', ' {', '        y(', ');']);
-  assert.equal(layout.height, 4 * layout.lineHeight);
+test('code keeps indentation and spaces and also breaks only at spaces; height and baseline follow the line count', () => {
+  const width = measureText('x'.repeat(10), true, TEXT_FONT_SIZE.small);
+  const layout = layoutText('    if (x) {\n        call(a, b);', 'small', true, width);
+  assert.deepEqual(layout.lines, ['    if (x) ', '{', '        call(a, ', 'b);']);
+  assert.equal(layout.lines.join('').replace(/ /g, ''), 'if(x){call(a,b);');
+  assert.equal(layout.height, layout.lines.length * layout.lineHeight);
   assert.ok(layout.baseline > 0 && layout.baseline < layout.lineHeight);
 });
 

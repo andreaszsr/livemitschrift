@@ -52,14 +52,15 @@ export function measureText(text: string, code: boolean, fontSize: number): numb
 }
 
 /**
- * Break text into lines no wider than `width`. Explicit line breaks are kept.
- * Normal text wraps at spaces (the space at a break is dropped) and splits a
- * word only if it alone is too wide; code wraps at any character and keeps
- * all spaces.
+ * Break text into lines no wider than `width`, only at spaces: words are never
+ * split, so a single word wider than the box stays on its own line and extends
+ * beyond the box. Explicit line breaks are kept. Normal text drops the space
+ * at a break; code keeps every space (trailing spaces stay on the line, where
+ * they are invisible) and its indentation.
  */
 export function layoutText(text: string, size: TextSize, code: boolean, width: number): TextLayout {
   const fontSize = TEXT_FONT_SIZE[size], lineHeight = fontSize * TEXT_LINE_HEIGHT;
-  const fits = (line: string): boolean => measureText(line, code, fontSize) <= width + 1e-6;
+  const fits = (line: string): boolean => measureText(line.replace(/ +$/, ""), code, fontSize) <= width + 1e-6;
   const lines: string[] = [], starts: number[] = [];
   let offset = 0;
   for (const paragraph of text.split("\n")) {
@@ -71,16 +72,21 @@ export function layoutText(text: string, size: TextSize, code: boolean, width: n
       cursor = (start < 0 ? cursor : start) + line.length;
       lines.push(line);
     };
-    if (code) { for (const line of splitCharacters(paragraph, fits)) push(line); offset += paragraph.length + 1; continue; }
     let line = "";
-    for (const word of paragraph.split(" ")) {
-      const candidate = line ? `${line} ${word}` : word;
-      if (fits(candidate)) { line = candidate; continue; }
-      if (line) push(line);
-      if (fits(word)) { line = word; continue; }
-      const pieces = splitCharacters(word, fits);
-      for (const piece of pieces.slice(0, -1)) push(piece);
-      line = pieces.at(-1) ?? "";
+    if (code) {
+      // Tokens are runs of spaces or of other characters; a word token that does not fit starts a new line.
+      for (const token of paragraph.match(/ +|[^ ]+/g) ?? []) {
+        // Indentation stays with the following word, so no line consists of spaces only.
+        if (line.trim() && token[0] !== " " && !fits(line + token)) { push(line); line = ""; }
+        line += token;
+      }
+    } else {
+      for (const word of paragraph.split(" ")) {
+        const candidate = line ? `${line} ${word}` : word;
+        if (!line || fits(candidate)) { line = candidate; continue; }
+        push(line);
+        line = word;
+      }
     }
     push(line);
     offset += paragraph.length + 1;
@@ -90,18 +96,6 @@ export function layoutText(text: string, size: TextSize, code: boolean, width: n
   const glyphHeight = (metrics.ascent - metrics.descent) * fontSize / metrics.unitsPerEm;
   const baseline = (lineHeight - glyphHeight) / 2 + metrics.ascent * fontSize / metrics.unitsPerEm;
   return { lines, starts, fontSize, lineHeight, height: lines.length * lineHeight, baseline };
-}
-
-/** Greedy split at character boundaries; always at least one character per line. */
-function splitCharacters(text: string, fits: (line: string) => boolean): string[] {
-  const lines: string[] = [];
-  let line = "";
-  for (const character of text) {
-    if (line && !fits(line + character)) { lines.push(line); line = ""; }
-    line += character;
-  }
-  lines.push(line);
-  return lines;
 }
 
 export function textBoxLayout(box: Pick<PageText, "text" | "size" | "code" | "width">): TextLayout {
