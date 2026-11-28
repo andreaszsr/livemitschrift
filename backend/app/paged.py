@@ -18,7 +18,8 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 from pypdf import PdfReader, PdfWriter
 
-from .protocol import text_message, SESSION_PATTERN, MAX_PDF_BYTES, MAX_NOTEBOOK_ASSET_BYTES
+from .protocol import text_message, SESSION_PATTERN, MAX_PDF_BYTES, MAX_NOTEBOOK_ASSET_BYTES, MAX_IMAGE_BYTES
+from .images import valid_image
 from .notebook import NotebookRoom, Snapshot, Page, Stroke, EditEvent, event_adapter, Viewport, Pointer
 from .page_store import Recovery, QuotaExceeded, MAX_FRAME_BYTES, MAX_TRANSFER_BYTES, CHUNK_CHARACTERS, MAX_PAGE_BYTES
 from .room import Client, ProtocolError, Room
@@ -184,7 +185,8 @@ class PagedRoom(NotebookRoom):
             self.pages[self.loaded_page].strokes = []
         page, _ = await asyncio.to_thread(store.page, identity, page_id)
         target = self.pages[page_id]
-        target.strokes = Page.model_validate(page).strokes
+        loaded = Page.model_validate(page)
+        target.strokes, target.images = loaded.strokes, loaded.images
         target.height, target.next_order = page["height"], page["nextOrder"]
         self.point_count = sum(len(s.points) for s in target.strokes)
         self.loaded_page = page_id
@@ -293,13 +295,13 @@ def register_paged(app: FastAPI, store: PageStore, access: PublisherAccess, acco
     def identity_for(room: PagedRoom) -> str:
         return next(key for key, value in rooms.items() if value is room)
 
-    @app.post("/api/sync/pdf/{asset_id}")
-    async def upload(asset_id: str, request: Request) -> dict[str, str]:
+    async def receive_asset(asset_id: str, request: Request, limit: int, label: str) -> tuple[str, bytes]:
+        """Authorize an asset upload for the caller's notebook and read it within `limit` bytes."""
         authorization = request.headers.get("authorization", "")
         if not authorization.startswith("Bearer ") or not re.fullmatch(SESSION_PATTERN, authorization[7:]):
             raise HTTPException(403, "Notebook publishing capability required.")
         if not re.fullmatch(SESSION_PATTERN, asset_id):
-            raise HTTPException(400, "Invalid PDF identity.")
+            raise HTTPException(400, f"Invalid {label} identity.")
         identity = hashlib.sha256(authorization[7:].encode("ascii")).hexdigest()
         if await asyncio.to_thread(store.is_withdrawn, identity):
             raise HTTPException(410, "Notebook was withdrawn.")
@@ -308,13 +310,31 @@ def register_paged(app: FastAPI, store: PageStore, access: PublisherAccess, acco
             raise HTTPException(403, "Notebook belongs to another account.")
         data = bytearray()
         async for chunk in request.stream():
-            if len(data) + len(chunk) > MAX_PDF_BYTES:
-                raise HTTPException(413, "PDF exceeds 50 MB.")
+            if len(data) + len(chunk) > limit:
+                raise HTTPException(413, f"{label} exceeds {limit // 1_000_000} MB.")
             data.extend(chunk)
-        if not data.startswith(b"%PDF-") or hashlib.sha256(data).hexdigest() != asset_id:
+        if hashlib.sha256(data).hexdigest() != asset_id:
+            raise HTTPException(400, f"{label} identity mismatch.")
+        return identity, bytes(data)
+
+    @app.post("/api/sync/pdf/{asset_id}")
+    async def upload(asset_id: str, request: Request) -> dict[str, str]:
+        identity, data = await receive_asset(asset_id, request, MAX_PDF_BYTES, "PDF")
+        if not data.startswith(b"%PDF-"):
             raise HTTPException(400, "PDF identity mismatch.")
         try:
-            await durable_io(store.put_asset, identity, asset_id, bytes(data))
+            await durable_io(store.put_asset, identity, asset_id, data)
+        except ProtocolError as error:
+            raise HTTPException(413, str(error)) from error
+        return {"sessionId": identity}
+
+    @app.post("/api/sync/image/{asset_id}")
+    async def upload_image(asset_id: str, request: Request) -> dict[str, str]:
+        identity, data = await receive_asset(asset_id, request, MAX_IMAGE_BYTES, "Image")
+        if valid_image(data) is None:
+            raise HTTPException(400, "Expected a PNG or JPEG image of at most 4096 pixels per side.")
+        try:
+            await durable_io(store.put_asset, identity, asset_id, data, "image")
         except ProtocolError as error:
             raise HTTPException(413, str(error)) from error
         return {"sessionId": identity}
@@ -447,6 +467,7 @@ def register_paged(app: FastAPI, store: PageStore, access: PublisherAccess, acco
                                 live = edit.model_copy(deep=True)
                                 live.id = f"durable-{value['sequence']}"
                                 live.remove = list(dict.fromkeys(live.remove + [s.id for s in live.insert]))
+                                live.remove_images = list(dict.fromkeys(live.remove_images + [i.id for i in live.insert_images]))
                                 if room.active and room.active[1] in live.remove:
                                     room.active = None
                                 room.apply(client, EditEvent(type="edit", edit=live))
@@ -646,6 +667,24 @@ def register_paged(app: FastAPI, store: PageStore, access: PublisherAccess, acco
                         break
                 return page
         return await asyncio.to_thread(read)
+
+    def page_image(identity: str, asset_id: str) -> tuple[bytes, str]:
+        # Only images that a page of this notebook currently shows are served.
+        state = store.structure(identity)
+        if not state or not any(i["assetId"] == asset_id for t in state["notebook"]["topics"] for p in t["pages"] for i in p.get("images", [])):
+            raise HTTPException(404, "Image unavailable.")
+        data = store.asset(identity, asset_id, "image")
+        media_type = valid_image(data) if data is not None else None
+        if media_type is None:
+            raise HTTPException(404, "Image unavailable.")
+        return data, media_type
+
+    @app.get("/api/notebook/{identity}/image/{asset_id}")
+    async def download_image(identity: str, asset_id: str) -> Response:
+        if not re.fullmatch(SESSION_PATTERN, identity) or not re.fullmatch(SESSION_PATTERN, asset_id):
+            raise HTTPException(404, "Unknown image.")
+        data, media_type = await asyncio.to_thread(page_image, identity, asset_id)
+        return Response(data, media_type=media_type, headers={"Cache-Control": "private, max-age=31536000, immutable", "ETag": f'"{asset_id}"', "X-Content-Type-Options": "nosniff"})
 
     @app.get("/api/notebook/{identity}/pdf/{asset_id}/page/{number}")
     async def download_page(identity: str, asset_id: str, number: int) -> Response:

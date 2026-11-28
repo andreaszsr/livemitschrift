@@ -1,14 +1,15 @@
-import { applyNotebookEvent, createStrokeId, LINE_MIN_LENGTH_PX, SHAPE_KINDS, SHAPE_PRESSURE, shapeStrokes, snapToGrid, DrawingSession, EditHistory, findPage, hitStroke, HoldDetector, pressureWidth, straightLine, clampOffset, lassoSelection, pasteStrokes, strokeBounds, translateStrokes, InkDocument, LaserPointer, MAX_DOCUMENT_HEIGHT, MAX_PDF_BYTES, notebookPages, notebookPdfPlacement, PAGE_SIZE, PenInput, ViewportInkRenderer } from '@livemitschrift/core';
-import type { ShapeKind } from '@livemitschrift/core';
+import { applyNotebookEvent, createStrokeId, imageAt, MAX_PAGE_IMAGES, moveImage, placeImage, resizeImage, LINE_MIN_LENGTH_PX, SHAPE_KINDS, SHAPE_PRESSURE, shapeStrokes, snapToGrid, DrawingSession, EditHistory, findPage, hitStroke, HoldDetector, pressureWidth, straightLine, clampOffset, lassoSelection, pasteStrokes, strokeBounds, translateStrokes, InkDocument, LaserPointer, MAX_DOCUMENT_HEIGHT, MAX_PDF_BYTES, notebookPages, notebookPdfPlacement, PAGE_SIZE, PenInput, ViewportInkRenderer } from '@livemitschrift/core';
+import type { ImageCorner, PageImage, ShapeKind } from '@livemitschrift/core';
 import type { InputHandlers, InputObservation, NotebookSnapshot, Notebook, NotePage, PageEdit, Topic, Point, Stroke, Vector, ViewPosition } from '@livemitschrift/core';
 import { SelectionOverlay } from './selection-overlay.js';
 import { LinePreview } from './line-preview.js';
 import { ShapePreview } from './shape-preview.js';
+import { imageFile, prepareImage } from './image-import.js';
 import { loadPdfDocument, NotebookPdfRenderer, PageThumbnails } from '@livemitschrift/pdf';
-import { button, escapeHtml, icon, Toolbar, toolbarPreferences, ViewportZoom, zoomControls } from '@livemitschrift/ui';
+import { button, escapeHtml, icon, ImageLayer, Toolbar, toolbarPreferences, ViewportZoom, zoomControls } from '@livemitschrift/ui';
 import type { ToolbarAction } from '@livemitschrift/ui';
 import { NativePenInput, nativeInputAvailable } from './native-input.js';
-import { closeApp, desktopStorageAvailable, openLiveViewer, readPdfAsset, storePdfAsset, toggleFullscreen } from './local-store.js';
+import { closeApp, desktopStorageAvailable, openLiveViewer, readImageAsset, readPdfAsset, storeImageAsset, storePdfAsset, toggleFullscreen } from './local-store.js';
 import { encode as encodeQr } from 'uqr';
 import { acknowledgeChanges, backupNotebook, createNotebook, createTopic, deleteNotebook, deleteTopic, editPage, forgetPublisherKey, insertBlankPage, loadLibrary, loadNotebook, loadPublisherKey, outgoingChanges, renameItem, reorderItems, restoreNotebook, chooseExportFolder, exportPdfToFolder, savePublisherKey, setPreference, syncCheckpoint, syncStatus, syncTarget } from './notebook-store.js';
 import type { Library, NotebookLoad } from './notebook-store.js';
@@ -104,6 +105,15 @@ class Editor {
     private move: {start: Point; offset: Vector; frame: number | null} | null = null;
     /** App-internal clipboard; pasting works across pages and notebooks. */
     private clipboard: {strokes: Stroke[]; pageId: string; pastes: number} | null = null;
+    private readonly images: ImageLayer;
+    private selectedImage: string | null = null;
+    private imageDrag: {mode: 'move' | ImageCorner; start: Point; original: PageImage; current: PageImage} | null = null;
+    private imageClipboard: {image: PageImage; pageId: string; pastes: number} | null = null;
+    /** Written to the system clipboard on internal copies, so a later paste can tell them from new screenshots. */
+    private clipboardMarker = '';
+    private pasteFallback: number | undefined;
+    /** Last mouse or pen position over the page (also hovering), in document coordinates. */
+    private lastPointer: {pageId: string; x: number; y: number} | null = null;
     private pen = penPreferences(null);
     private readonly writingIds = writingActionIds(this.pen);
     private histories = new Map<string, EditHistory>();
@@ -138,6 +148,8 @@ class Editor {
         this.selectionOverlay = new SelectionOverlay(this.paper, this.pageSize);
         this.linePreview = new LinePreview(this.paper, this.pageSize);
         this.shapePreview = new ShapePreview(this.paper, this.pageSize);
+        // Local image files become blob URLs; they are immutable, so each is read once per session.
+        this.images = new ImageLayer(this.paper, this.canvas, async assetId => URL.createObjectURL(new Blob([(await readImageAsset(assetId)).slice().buffer])));
         this.pdf = new NotebookPdfRenderer(element<HTMLCanvasElement>('pdf-background'), readPdfAsset, error => { element('pdf-status').textContent = String(error); report(`PDF-Darstellung fehlgeschlagen: ${String(error)}`); });
         this.toolbar = new Toolbar(element('toolbar'), this.writingIds, true,
             preferences => { this.preference('toolbar-writing', JSON.stringify(preferences)); this.updateToolbar(); },
@@ -178,7 +190,7 @@ class Editor {
                 }
             }, points: points => { this.metrics.accept(points, this.renderer.pixelsPerUnit); if (this.laserActive)
                 this.pointer(points.at(-1) ?? null);
-            else if (this.move || this.lassoPath)
+            else if (this.move || this.lassoPath || this.imageDrag)
                 this.lassoPoints(points);
             else if (this.drawingTool === 'eraser')
                 for (const point of points)
@@ -213,6 +225,7 @@ class Editor {
             this.move = {start: point, offset: {x: 0, y: 0}, frame: null};
             return;
         }
+        if (this.imageStart(point)) return;
         this.clearSelection();
         this.lassoPath = [point];
         this.selectionOverlay.lasso(this.lassoPath);
@@ -221,6 +234,7 @@ class Editor {
         const last = points.at(-1);
         if (!last) return;
         if (this.lassoPath) { this.lassoPath.push(...points); this.selectionOverlay.lasso(this.lassoPath); return; }
+        if (this.imageDrag) { this.imageMove(last); return; }
         const move = this.move!;
         move.offset = clampOffset(this.selection, {x: last.x - move.start.x, y: last.y - move.start.y}, this.pageSize);
         // Preview by swapping moved copies into the ink map; the page's stroke
@@ -233,6 +247,7 @@ class Editor {
         });
     }
     private lassoEnd(): void {
+        if (this.imageDrag) { this.imageEnd(); return; }
         if (this.lassoPath) {
             const path = this.lassoPath; this.lassoPath = null;
             this.selection = lassoSelection(this.current.strokes, path);
@@ -252,11 +267,120 @@ class Editor {
     private clearSelection(): void {
         if (this.move) { if (this.move.frame !== null) cancelAnimationFrame(this.move.frame); this.move = null; this.redrawPage(); }
         this.selection = []; this.lassoPath = null; this.selectionOverlay.clear();
+        this.selectImage(null);
     }
     private redrawPage(): void {
         this.ink.replace({ type: 'snapshot', page: this.pageSize, strokes: this.current.strokes });
         this.current.strokes = [...this.ink.strokes.values()];
         this.renderer.invalidate();
+        this.images.render(this.current.images ?? []);
+        this.selectImage(this.selectedImage);
+    }
+    // ---- Images: insert, select with the lasso, move, resize, copy, delete ----
+    private pageImage(id: string | null): PageImage | undefined { return id ? (this.current.images ?? []).find(image => image.id === id) : undefined; }
+    private selectImage(id: string | null): void {
+        const image = this.pageImage(id);
+        this.selectedImage = image?.id ?? null;
+        this.images.select(image ?? null);
+    }
+    /** A lasso tap on an image selects it; dragging inside moves it, dragging a corner handle resizes it. */
+    private imageStart(point: Point): boolean {
+        const images = this.current.images ?? [], selected = this.pageImage(this.selectedImage);
+        const reach = 14 / this.renderer.pixelsPerUnit;
+        let mode: 'move' | ImageCorner = 'move', target = imageAt(images, point);
+        if (selected) {
+            const corners: [ImageCorner, number, number][] = [['nw', selected.x, selected.y], ['ne', selected.x + selected.width, selected.y],
+                ['sw', selected.x, selected.y + selected.height], ['se', selected.x + selected.width, selected.y + selected.height]];
+            const corner = corners.find(([, x, y]) => Math.hypot(point.x - x, point.y - y) <= reach);
+            if (corner) { mode = corner[0]; target = selected; }
+            else if (point.x >= selected.x && point.x <= selected.x + selected.width && point.y >= selected.y && point.y <= selected.y + selected.height) target = selected;
+        }
+        if (!target) return false;
+        this.selection = []; this.selectionOverlay.clear();
+        this.selectImage(target.id);
+        this.imageDrag = {mode, start: point, original: target, current: target};
+        return true;
+    }
+    private imageMove(point: Point): void {
+        const drag = this.imageDrag!;
+        drag.current = drag.mode === 'move' ? moveImage(drag.original, point.x - drag.start.x, point.y - drag.start.y) : resizeImage(drag.original, drag.mode, point);
+        this.images.preview(drag.current);
+    }
+    private imageEnd(): void {
+        const {original, current} = this.imageDrag!;
+        this.imageDrag = null;
+        if (Math.abs(current.x - original.x) < .5 && Math.abs(current.y - original.y) < .5 && Math.abs(current.width - original.width) < .5) {
+            this.images.preview(original);
+            return;
+        }
+        this.growPage(current.y + current.height);
+        this.commitEdit(this.history().record(this.current.id, this.current.height, [], [], {insert: [current], removed: [original]}));
+    }
+    private growPage(bottom: number): void {
+        if (bottom <= this.current.height) return;
+        this.current.height = Math.min(MAX_DOCUMENT_HEIGHT, Math.ceil(bottom) + 200);
+        this.pageSize.height = this.current.height;
+        this.sizePaper();
+    }
+    /** Prepare, store and place an image file: centred in view, or centred on a drop point. */
+    private insertImage(file: Blob, at?: {x: number; y: number}): void {
+        if (!this.persistent) return;
+        this.run(async () => {
+            if ((this.current.images?.length ?? 0) >= MAX_PAGE_IMAGES) throw new Error(`Höchstens ${MAX_PAGE_IMAGES} Bilder pro Seite.`);
+            const prepared = await prepareImage(file);
+            const assetId = await storeImageAsset(prepared.bytes);
+            let place = placeImage(prepared.width, prepared.height, this.renderer.visibleY, this.viewport.clientHeight / this.renderer.pixelsPerUnit);
+            // Centre on the drop point, else on the last pointer position if it is on this page and still in view.
+            const centre = at ?? this.pointerInView();
+            if (centre) place = {...place, ...moveImage({...place, x: centre.x - place.width / 2, y: centre.y - place.height / 2}, 0, 0)};
+            this.addImage({id: createStrokeId(), assetId, ...place, order: this.current.nextOrder++});
+        });
+    }
+    /** The last pointer position if it lies on the current page and inside the visible area. */
+    private pointerInView(): {x: number; y: number} | null {
+        const pointer = this.lastPointer, top = this.renderer.visibleY, visible = this.viewport.clientHeight / this.renderer.pixelsPerUnit;
+        return pointer && pointer.pageId === this.current.id && pointer.y >= top && pointer.y <= top + visible ? pointer : null;
+    }
+    private addImage(image: PageImage): void {
+        this.growPage(image.y + image.height);
+        this.commitEdit(this.history().record(this.current.id, this.current.height, [], [], {insert: [image], removed: []}));
+        this.clearSelection();
+        this.tool = 'lasso';
+        this.selectImage(image.id);
+        this.status();
+    }
+    private copyImage(cut: boolean): void {
+        const image = this.pageImage(this.selectedImage);
+        if (!image || !this.ready || this.busy) return;
+        this.imageClipboard = {image: structuredClone(image), pageId: this.current.id, pastes: 0};
+        this.clipboard = null;
+        this.markClipboard();
+        if (cut) this.deleteImage();
+    }
+    private deleteImage(): void {
+        const image = this.pageImage(this.selectedImage);
+        if (!image || !this.ready || this.busy) return;
+        this.selectImage(null);
+        this.commitEdit(this.history().record(this.current.id, this.current.height, [], [], {insert: [], removed: [image]}));
+    }
+    private pasteImage(): void {
+        const clipboard = this.imageClipboard;
+        if (!clipboard || !this.ready || this.busy || this.closing) return;
+        if ((this.current.images?.length ?? 0) >= MAX_PAGE_IMAGES) { report(`Höchstens ${MAX_PAGE_IMAGES} Bilder pro Seite.`); return; }
+        // Under the pointer when it is over the visible page; otherwise offset like strokes.
+        const pointer = this.pointerInView(), image = clipboard.image;
+        const step = pointer ? 0 : clipboard.pageId === this.current.id ? 24 * ++clipboard.pastes : 0;
+        const placed = pointer ? moveImage(image, pointer.x - image.width / 2 - image.x, pointer.y - image.height / 2 - image.y) : moveImage(image, step, step);
+        this.addImage({...placed, id: createStrokeId(), order: this.current.nextOrder++});
+    }
+    /** Best effort; without it a later paste of a new screenshot may paste internal content instead. */
+    private markClipboard(): void {
+        this.clipboardMarker = `livemitschrift-clipboard-${createStrokeId()}`;
+        void navigator.clipboard?.writeText(this.clipboardMarker).catch(() => { this.clipboardMarker = ''; });
+    }
+    private pasteInternal(): void {
+        if (this.imageClipboard) this.pasteImage();
+        else if (this.clipboard) this.paste();
     }
     /** Apply a local edit like undo/redo does: page model, ink, durable queue and live viewers. */
     private commitEdit(edit: PageEdit): void {
@@ -269,6 +393,8 @@ class Editor {
     private copySelection(cut: boolean): void {
         if (!this.selection.length || !this.ready || this.busy) return;
         this.clipboard = {strokes: structuredClone(this.selection), pageId: this.current.id, pastes: 0};
+        this.imageClipboard = null;
+        this.markClipboard();
         if (cut) this.deleteSelection();
     }
     private deleteSelection(): void {
@@ -280,17 +406,22 @@ class Editor {
         const clipboard = this.clipboard;
         if (!clipboard || !this.ready || this.busy || this.closing) return;
         this.input.finish();
-        // Same page: offset each paste so copies do not hide the original.
-        const step = clipboard.pageId === this.current.id ? 24 * ++clipboard.pastes : 0;
+        // Centre the copy under the pointer when it is over the visible page; otherwise offset
+        // each paste on the same page so copies do not hide the original.
+        const bounds = strokeBounds(clipboard.strokes), pointer = this.pointerInView();
+        let offset: Vector;
+        if (pointer && bounds) offset = {x: pointer.x - (bounds.left + bounds.right) / 2, y: pointer.y - (bounds.top + bounds.bottom) / 2};
+        else { const step = clipboard.pageId === this.current.id ? 24 * ++clipboard.pastes : 0; offset = {x: step, y: step}; }
+        offset = {x: offset.x, y: Math.max(offset.y, -(bounds?.top ?? 0))};
         // Grow the writing space when the copied ink reaches below this page.
         let lowest = 0;
-        for (const stroke of clipboard.strokes) for (const point of stroke.points) lowest = Math.max(lowest, point.y + step);
+        for (const stroke of clipboard.strokes) for (const point of stroke.points) lowest = Math.max(lowest, point.y + offset.y);
         if (lowest > this.current.height) {
             this.current.height = Math.min(MAX_DOCUMENT_HEIGHT, Math.ceil(lowest) + 200);
             this.pageSize.height = this.current.height;
             this.sizePaper();
         }
-        const pasted = pasteStrokes(clipboard.strokes, {x: step, y: step}, this.pageSize, this.current.nextOrder, createStrokeId);
+        const pasted = pasteStrokes(clipboard.strokes, offset, this.pageSize, this.current.nextOrder, createStrokeId);
         this.current.nextOrder += pasted.length;
         this.commitEdit(this.history().record(this.current.id, this.current.height, pasted, []));
         this.clearSelection();
@@ -336,6 +467,36 @@ class Editor {
         });
         element<HTMLInputElement>('pdf-file').addEventListener('change', event => { const field = event.currentTarget as HTMLInputElement, file = field.files?.[0]; field.value = ''; if (file)
             this.run(() => this.importPdf(file)); });
+        element<HTMLInputElement>('image-file').addEventListener('change', event => { const field = event.currentTarget as HTMLInputElement, file = field.files?.[0]; field.value = ''; if (file)
+            this.insertImage(file); });
+        document.addEventListener('paste', event => {
+            if ((event.target as Element | null)?.closest?.('input,select,textarea,dialog')) return;
+            window.clearTimeout(this.pasteFallback); this.pasteFallback = undefined;
+            const file = imageFile(event.clipboardData), text = event.clipboardData?.getData('text/plain') ?? '';
+            const internal = (this.clipboard || this.imageClipboard) && this.clipboardMarker !== '' && text === this.clipboardMarker;
+            event.preventDefault();
+            if (file && !internal) this.insertImage(file);
+            else this.pasteInternal();
+        });
+        // Remember where the mouse or pen was over the page, so pasted images land there.
+        const track = (clientX: number, clientY: number): void => {
+            const view = this.viewport.getBoundingClientRect();
+            if (clientX < view.left || clientX > view.right || clientY < view.top || clientY > view.bottom) return;
+            const point = this.renderer.toPoint(clientX, clientY, 0);
+            if (point.x >= 0 && point.x <= this.pageSize.width && point.y >= 0 && point.y <= this.current.height)
+                this.lastPointer = {pageId: this.current.id, x: point.x, y: point.y};
+        };
+        window.addEventListener('livemitschrift-native-input', event => { const {x, y} = (event as CustomEvent<{x: number; y: number}>).detail; track(x, y); });
+        this.viewport.addEventListener('pointermove', event => track(event.clientX, event.clientY));
+        // Finder drops reach the page because Tauri's own file drop handling is disabled for this window.
+        this.viewport.addEventListener('dragover', event => { if (event.dataTransfer?.types.includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; } });
+        this.viewport.addEventListener('drop', event => {
+            const file = imageFile(event.dataTransfer);
+            if (!file) return;
+            event.preventDefault();
+            const point = this.renderer.toPoint(event.clientX, event.clientY, 0);
+            this.insertImage(file, {x: point.x, y: point.y});
+        });
         element('storage-retry').addEventListener('click', () => { if (!this.ready)
             void this.restore();
         else
@@ -389,9 +550,13 @@ class Editor {
             }
             const clip = (event.metaKey || event.ctrlKey) && !event.altKey ? event.key.toLowerCase() : '';
             if ((clip === 'c' || clip === 'x') && this.selection.length) { event.preventDefault(); this.copySelection(clip === 'x'); return; }
-            if (clip === 'v' && this.clipboard) { event.preventDefault(); this.paste(); return; }
+            if ((clip === 'c' || clip === 'x') && this.selectedImage) { event.preventDefault(); this.copyImage(clip === 'x'); return; }
+            // The paste event decides between a system clipboard image and internal content; if WebKit
+            // sends no paste event (nothing editable is focused), fall back to the internal clipboard.
+            if (clip === 'v') { window.clearTimeout(this.pasteFallback); this.pasteFallback = window.setTimeout(() => this.pasteInternal(), 80); return; }
             if ((event.key === 'Backspace' || event.key === 'Delete') && this.selection.length) { event.preventDefault(); this.deleteSelection(); return; }
-            if (event.key === 'Escape' && this.selection.length) { this.clearSelection(); return; }
+            if ((event.key === 'Backspace' || event.key === 'Delete') && this.selectedImage) { event.preventDefault(); this.deleteImage(); return; }
+            if (event.key === 'Escape' && (this.selection.length || this.selectedImage)) { this.clearSelection(); return; }
             if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey)
                 return;
             // Presenter remotes and tablet ExpressKeys usually send these keys.
@@ -501,7 +666,7 @@ class Editor {
                 this.sharingStates.set(id,state);
                 if (this.notebook.id===id) {this.sharingState=state;this.updateSharing();this.updateToolbar();}
             };
-            publisher = new DeltaPublisher(snapshot, loaded.secret, readPdfAsset, state, {status:()=>syncStatus(id),checkpoint:()=>syncCheckpoint(id),outgoing:after=>outgoingChanges(id,after),acknowledge:sequence=>acknowledgeChanges(id,sequence),preview:()=>this.notebook.id===id ? snapshot() : null});
+            publisher = new DeltaPublisher(snapshot, loaded.secret, readPdfAsset, readImageAsset, state, {status:()=>syncStatus(id),checkpoint:()=>syncCheckpoint(id),outgoing:after=>outgoingChanges(id,after),acknowledge:sequence=>acknowledgeChanges(id,sequence),preview:()=>this.notebook.id===id ? snapshot() : null});
             this.publishers.set(id,publisher);
         }
         return publisher;
@@ -611,7 +776,7 @@ class Editor {
     private async exportPdf(topic: Topic, folder: string, name: string): Promise<boolean> {
         await this.requireSaved();
         const {exportTopicPdf} = await import('@livemitschrift/pdf/export');
-        const pdf = await exportTopicPdf(topic, readPdfAsset);
+        const pdf = await exportTopicPdf(topic, readPdfAsset, {readImage: readImageAsset});
         if (await exportPdfToFolder(folder, name, false, pdf) === 'saved') return true;
         if (!await this.confirmDelete('Datei ersetzen?', `„${name}.pdf“ gibt es im Exportordner bereits.`, undefined, 'Ersetzen')) return false;
         return await exportPdfToFolder(folder, name, true, pdf) === 'saved';
@@ -657,6 +822,7 @@ class Editor {
         page.strokes = [...this.ink.strokes.values()];
         this.sizePaper();
         this.applyGrid();
+        this.images.render(page.images ?? []);
         this.viewport.scrollTop = (this.positions[page.id] ?? 0) * this.paper.getBoundingClientRect().width / page.width;
         this.renderer.invalidate();
         this.updateToolbar();
@@ -706,7 +872,7 @@ class Editor {
         this.display(this.notebook.topics.find(topic => topic.id === id)!.pages[0]!);
         this.publisher?.refresh();
     }
-    private finishGesture(): void { if (this.laserActive) { this.laserActive = false; this.pointer(null); } if (this.lassoPath || this.move) this.lassoEnd(); this.endShape(); this.endHold(); this.session.finish(); if (this.erased.size) {
+    private finishGesture(): void { if (this.laserActive) { this.laserActive = false; this.pointer(null); } if (this.lassoPath || this.move || this.imageDrag) this.lassoEnd(); this.endShape(); this.endHold(); this.session.finish(); if (this.erased.size) {
         this.queue.enqueue(this.history().record(this.current.id, this.current.height, [], [...this.erased.values()]));
         this.erased.clear();
     } this.lastErase = null; this.status(); }
@@ -849,6 +1015,7 @@ class Editor {
         this.queue.enqueue(edit);
         this.publisher?.publish({ type: 'edit', edit });
         this.renderer.invalidate();
+        this.images.render(this.current.images ?? []);
         this.status();
     }
     private sizePaper(): void {this.zoom.resize();}
@@ -967,6 +1134,7 @@ class Editor {
             qr: 'Großen QR-Code mit dem Leselink zeigen, damit Studierende ihn vom Beamer abfotografieren können.',
             settings: 'Selten benötigte Funktionen: Sicherungen, Verwaltung, Farben, Leiste und Stifttest.',
             eraser: 'Berührte handschriftliche Striche vollständig entfernen. Der PDF-Hintergrund bleibt erhalten (Taste E).',
+            image: 'Ein Bild (PNG, JPEG, auch Screenshots) auf die aktuelle Seite setzen. Alternativ mit ⌘V einfügen oder aus dem Finder auf die Seite ziehen. Mit dem Lasso antippen zum Verschieben, Skalieren an den Ecken, ⌫ zum Löschen.',
             import: 'Ein mehrseitiges PDF als neues Thema einfügen. Jede PDF-Seite erhält eine eigene beschreibbare Seite.',
             blank: 'Ein neues Thema mit einer leeren Schreibseite im aktuellen Notizbuch anlegen.',
             'blank-page': 'Direkt nach der aktuellen Seite eine leere Schreibseite einfügen.',
@@ -1021,6 +1189,7 @@ class Editor {
         // The panel keeps lecture actions; rarely used administration opens a dialog.
         this.renderTools([
             action('import', 'PDF als Thema einfügen', 'pdf', () => element<HTMLInputElement>('pdf-file').click(), { disabled: disabled || !this.persistent }),
+            action('image', 'Bild einfügen', 'image', () => element<HTMLInputElement>('image-file').click(), { disabled: disabled || !this.persistent }),
             action('blank', 'Leeres Thema', 'blank', () => this.askTitle('Leeres Thema', 'Neues Thema', name => this.run(async () => { if (!await this.queue.flush())
                 throw new Error('Bitte zuerst speichern.'); const id = await createTopic(this.notebook.id, name, []); this.loaded = await loadNotebook(this.notebook.id); this.display(this.notebook.topics.find(topic => topic.id === id)!.pages[0]!); this.publisher?.refresh(); })), { disabled: disabled || !this.persistent }),
             action('zoom', `Zoom und Ansicht · ${this.zoom.label}`, 'zoom', () => { this.input.finish(); this.zoomOptions(); }),
@@ -1422,7 +1591,7 @@ class Editor {
         } };
         jump.addEventListener('keydown', event => { if (event.key === 'Enter')
             go(); });
-        const previews = new PageThumbnails(dialog, readPdfAsset);
+        const previews = new PageThumbnails(dialog, readPdfAsset, false, undefined, async assetId => new Blob([(await readImageAsset(assetId)).slice().buffer]));
         dialog.addEventListener('close', () => previews.dispose(), { once: true });
         const grid = document.createElement('div');
         grid.className = 'thumbnails';

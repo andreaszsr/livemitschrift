@@ -18,7 +18,7 @@ function setup(){
     globalThis.WebSocket=Socket;Socket.instances=[];
     const state={type:'notebook',notebook:{id:'book',title:'Course',topics:[{id:'topic',title:'Slides',pages:[page('one'),page('two')]}]},position:{pageId:'one',y:0}};
     const pending=[],acks=[],states=[];let checkpoints=0,sequence=4;
-    const publisher=new DeltaPublisher(()=>state,'1'.repeat(64),async()=>new Uint8Array([37,80,68,70,45]),value=>states.push(value),{
+    const publisher=new DeltaPublisher(()=>state,'1'.repeat(64),async()=>new Uint8Array([37,80,68,70,45]),async()=>new Uint8Array(),value=>states.push(value),{
         status:async()=>({sequence,head:'a'.repeat(64),firstPending:pending[0]?.sequence??null}),
         checkpoint:async()=>{checkpoints++;return{sequence,head:'a'.repeat(64),notebook:structuredClone(state.notebook)};},
         outgoing:async after=>pending.filter(value=>value.sequence>after).slice(0,1),

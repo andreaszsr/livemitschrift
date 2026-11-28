@@ -17,7 +17,7 @@ from test_support import BINARY, ROOT, start_server, stop, seed_database
 def verify(path, expected):
     with sqlite3.connect(path) as connection:
         assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
-        assert connection.execute("PRAGMA user_version").fetchone() == (1,)
+        assert connection.execute("PRAGMA user_version").fetchone() == (2,)
         assert json.loads(connection.execute("SELECT data FROM strokes WHERE id='seed-ink'").fetchone()[0]) == expected
         assert connection.execute("SELECT count(*) FROM topics").fetchone()[0] == 2
         assert connection.execute("SELECT count(*) FROM pages").fetchone()[0] == 3

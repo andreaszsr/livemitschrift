@@ -94,6 +94,12 @@ fn shape(webview:&Webview<Wry>,from:(f64,f64),to:(f64,f64))->TestResult<String>{
     wait_for(webview,"document.querySelector('.shape-preview').style.display==='none'")?;
     Ok(path.as_str().unwrap_or_default().to_string())
 }
+/// A generated PNG file of the given size, handed to the page like a user file.
+const TEST_IMAGE:&str="(async (w,h) => {const c=document.createElement('canvas');c.width=w;c.height=h;const g=c.getContext('2d');g.fillStyle='#d04030';g.fillRect(0,0,w,h);const blob=await new Promise(r=>c.toBlob(r,'image/png'));const t=new DataTransfer();t.items.add(new File([blob],'test.png',{type:'image/png'}));return t;})";
+/// Drag with the lasso from a point of the (first) image, given as fractions of its frame, by an offset in screen pixels.
+fn drag_image(webview:&Webview<Wry>,fx:f64,fy:f64,dx:f64,dy:f64)->TestResult<()>{
+    evaluate(webview,&format!("(() => {{const r=document.querySelector('.image-layer img').getBoundingClientRect(),x=r.left+r.width*{fx},y=r.top+r.height*{fy};for(const [phase,ox,oy,buttons] of [['down',0,0,1],['drag',{dx}/2,{dy}/2,1],['drag',{dx},{dy},1],['up',{dx},{dy},0]])window.dispatchEvent(new CustomEvent('livemitschrift-native-input',{{detail:{{phase,x:x+ox,y:y+oy,pointerType:'mouse',pressure:0,buttons,button:0,eraser:false}}}}));return true;}})()"))?;Ok(())
+}
 fn scroll(webview:&Webview<Wry>,y:f64)->TestResult<()>{
     evaluate(webview,&format!("(() => {{const p=document.getElementById('paper').getBoundingClientRect();document.getElementById('viewport').scrollTop={y}*p.width/1200;return true;}})()"))?;
     wait_for(webview,&format!("Math.abs(document.getElementById('viewport').scrollTop*1200/document.getElementById('paper').getBoundingClientRect().width-{y})<3"))
@@ -414,6 +420,42 @@ fn library(webview:&Webview<Wry>,directory:&Path)->TestResult<()> {
     wait_for(webview,"document.getElementById('share-status').textContent==='Live · Serverstand bestätigt'")?;
     let reader=reader(webview,"library-reader",&url,900.0)?;
     wait_for(reader.as_ref(),"document.getElementById('stroke-count')?.textContent==='2 Striche'")?;
+    // Images: insert from a file, move and resize with the lasso, undo, delete; then paste and drop.
+    scroll(webview,0.0)?;
+    let size=|webview:&Webview<Wry>|->TestResult<(f64,f64)>{let v=evaluate(webview,"(() => {const r=document.querySelector('.image-layer img').getBoundingClientRect();return [r.left,r.width];})()")?;Ok((v[0].as_f64().unwrap_or(-1.0),v[1].as_f64().unwrap_or(-1.0)))};
+    // Hover at a known spot first: inserted images are centred on the last pointer position over the page.
+    evaluate(webview,"(() => {const v=document.getElementById('viewport').getBoundingClientRect();window.dispatchEvent(new CustomEvent('livemitschrift-native-input',{detail:{phase:'move',x:v.left+400,y:v.top+300,pointerType:'mouse',pressure:0,buttons:0,button:-1,eraser:false}}));return true;})()")?;
+    evaluate(webview,&format!("(() => {{{TEST_IMAGE}(400,300).then(t=>{{const f=document.getElementById('image-file');f.files=t.files;f.dispatchEvent(new Event('change',{{bubbles:true}}));return true;}});return true;}})()"))?;
+    wait_for(webview,"(() => {const i=document.querySelectorAll('.image-layer img');return i.length===1&&i[0].complete&&i[0].naturalWidth===400&&!document.querySelector('.image-selection').hidden&&document.querySelector('#toolbar [data-action=lasso]').getAttribute('aria-pressed')==='true';})()")?;
+    wait_for(webview,"(() => {const r=document.querySelector('.image-layer img').getBoundingClientRect(),v=document.getElementById('viewport').getBoundingClientRect();return Math.abs(r.left+r.width/2-v.left-400)<3&&Math.abs(r.top+r.height/2-v.top-300)<3;})()")?;
+    let (left,width)=size(webview)?;
+    drag_image(webview,0.5,0.5,-60.0,40.0)?;
+    wait_for(webview,&format!("Math.abs(document.querySelector('.image-layer img').getBoundingClientRect().left-{left}+60)<2"))?;
+    drag_image(webview,1.0,1.0,80.0,0.0)?;
+    wait_for(webview,&format!("document.querySelector('.image-layer img').getBoundingClientRect().width>{width}+40"))?;
+    action(webview,"undo")?;
+    wait_for(webview,&format!("Math.abs(document.querySelector('.image-layer img').getBoundingClientRect().width-{width})<2"))?;
+    // Undo clears the selection; a lasso tap on the image selects it again.
+    drag_image(webview,0.5,0.5,0.0,0.0)?;
+    wait_for(webview,"!document.querySelector('.image-selection').hidden")?;
+    evaluate(webview,"document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'Backspace',bubbles:true}));true")?;
+    wait_for(webview,"document.querySelectorAll('.image-layer img').length===0&&document.querySelector('.image-selection').hidden")?;
+    evaluate(webview,"(() => {const v=document.getElementById('viewport').getBoundingClientRect();window.dispatchEvent(new CustomEvent('livemitschrift-native-input',{detail:{phase:'move',x:v.left+300,y:v.top+250,pointerType:'mouse',pressure:0,buttons:0,button:-1,eraser:false}}));return true;})()")?;
+    evaluate(webview,&format!("(() => {{{TEST_IMAGE}(200,100).then(t=>{{document.dispatchEvent(new ClipboardEvent('paste',{{clipboardData:t,bubbles:true}}));return true;}});return true;}})()"))?;
+    wait_for(webview,"(() => {const i=document.querySelector('.image-layer img');return !!i&&i.complete&&i.naturalWidth===200;})()")?;
+    // The pasted image is centred under the last (hovering) pointer position.
+    wait_for(webview,"(() => {const r=document.querySelector('.image-layer img').getBoundingClientRect(),v=document.getElementById('viewport').getBoundingClientRect();return Math.abs(r.left+r.width/2-v.left-300)<3&&Math.abs(r.top+r.height/2-v.top-250)<3;})()")?;
+    evaluate(webview,&format!("(() => {{{TEST_IMAGE}(120,120).then(t=>{{const v=document.getElementById('viewport').getBoundingClientRect();document.getElementById('viewport').dispatchEvent(new DragEvent('drop',{{dataTransfer:t,bubbles:true,cancelable:true,clientX:v.left+200,clientY:v.top+200}}));return true;}});return true;}})()"))?;
+    wait_for(webview,"document.querySelectorAll('.image-layer img').length===2&&[...document.querySelectorAll('.image-layer img')].every(i=>i.complete&&i.naturalWidth>0)")?;
+    // ⌘C on the dropped image, hover elsewhere, ⌘V: the copy is centred under the pointer.
+    evaluate(webview,"(() => {const v=document.getElementById('viewport').getBoundingClientRect(),send=(phase,x,y,buttons)=>window.dispatchEvent(new CustomEvent('livemitschrift-native-input',{detail:{phase,x:v.left+x,y:v.top+y,pointerType:'mouse',pressure:0,buttons,button:phase==='move'?-1:0,eraser:false}}));send('down',200,200,1);send('up',200,200,0);return true;})()")?;
+    wait_for(webview,"!document.querySelector('.image-selection').hidden")?;
+    evaluate(webview,"(() => {const v=document.getElementById('viewport').getBoundingClientRect();document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'c',metaKey:true,bubbles:true}));window.dispatchEvent(new CustomEvent('livemitschrift-native-input',{detail:{phase:'move',x:v.left+520,y:v.top+320,pointerType:'mouse',pressure:0,buttons:0,button:-1,eraser:false}}));document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'v',metaKey:true,bubbles:true}));return true;})()")?;
+    wait_for(webview,"(() => {const i=document.querySelectorAll('.image-layer img'),v=document.getElementById('viewport').getBoundingClientRect();return i.length===3&&[...i].some(e=>{const r=e.getBoundingClientRect();return Math.abs(r.left+r.width/2-v.left-520)<3&&Math.abs(r.top+r.height/2-v.top-320)<3;});})()")?;
+    // The live reader receives the images once their files are uploaded and the edits committed.
+    wait_for(webview,"document.getElementById('share-status').textContent==='Live · Serverstand bestätigt'")?;
+    wait_for(reader.as_ref(),"(() => {const i=[...document.querySelectorAll('.image-layer img')];return i.length===3&&i.every(e=>e.complete&&e.naturalWidth>0&&!e.classList.contains('image-loading'));})()")?;
+    println!("IMAGES_PASS file insert, lasso move and corner resize, undo, delete, clipboard paste and Finder-style drop, copy and paste under the pointer, live reader shows uploaded images");
     println!("LIBRARY_PASS native vector PDF export, portable backup, safe copied restore, rename, durable publish and HTTP reader");
     fs::write(directory.join("library-passed"),"ready")?;Ok(())
 }

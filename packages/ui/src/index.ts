@@ -42,6 +42,7 @@ export const icons: Record<string, string> = {
     'shape-quadrant': '<path d="M5 20V4 M5 20h15 M5 4 3 7 M5 4l2 3 M20 20l-3-2 M20 20l-3 2 M9 19v2 M13 19v2 M4 16h2 M4 12h2"/>',
     'shape-cross': '<path d="M12 3v18 M3 12h18 M12 3l-2 3 M12 3l2 3 M21 12l-3-2 M21 12l-3 2"/>',
     snap: '<path d="M6 4v8a6 6 0 0 0 12 0V4h-4v8a2 2 0 0 1-4 0V4Z M6 8h4 M14 8h4"/>',
+    image: '<path d="M4 5h16v14H4Z M4 16l5-5 4 4 3-3 4 4 M15.5 9.5h.01"/>',
     grid: '<path d="M4 4h16v16H4Z M4 9.3h16 M4 14.7h16 M9.3 4v16 M14.7 4v16"/>',
     copy: '<rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h4"/>',
 };
@@ -332,3 +333,4 @@ export { ViewportZoom, zoomPreferences, zoomAnchor, zoomScrollDelta, addZoomLock
 export type { ZoomPreferences } from './zoom.js';
 export { linkParts, linkedText } from './links.js';
 export type { TextPart } from './links.js';
+export { ImageLayer } from './image-layer.js';

@@ -35,6 +35,12 @@ pub fn store(directory: &Path, bytes: &[u8]) -> StorageResult<String> {
     let identity = sha256_hex(bytes);
     let destination = asset_path(directory, &identity)?;
     if destination.exists() { read(directory, &identity)?; return Ok(identity); }
+    write_atomic(directory, &destination, &identity, bytes)?;
+    Ok(identity)
+}
+
+/// Write a content-addressed file durably: temporary file, fsync, rename, directory fsync.
+pub fn write_atomic(directory: &Path, destination: &Path, identity: &str, bytes: &[u8]) -> StorageResult<()> {
     fs::create_dir_all(directory)?;
     let temporary = directory.join(format!(".{identity}.{}.tmp", std::process::id()));
     let mut file = File::options().write(true).create_new(true).open(&temporary)?;
@@ -42,14 +48,13 @@ pub fn store(directory: &Path, bytes: &[u8]) -> StorageResult<String> {
         file.write_all(bytes)?;
         file.sync_all()?;
         drop(file);
-        fs::rename(&temporary, &destination)?;
+        fs::rename(&temporary, destination)?;
         #[cfg(unix)]
         File::open(directory)?.sync_all()?;
         Ok(())
     })();
     if result.is_err() { let _ = fs::remove_file(&temporary); }
-    result?;
-    Ok(identity)
+    result
 }
 
 #[cfg(test)]

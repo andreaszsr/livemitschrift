@@ -18,6 +18,8 @@ export class PageThumbnails {
     private readonly read: (id: string, pageNumber: number) => Promise<Uint8Array>,
     private readonly singlePageResources = false,
     private readonly preview?: (page: NotePage) => Promise<NotePage>,
+    /** Loads a page image file; without it previews show PDF and ink only. */
+    private readonly image?: (assetId: string) => Promise<Blob>,
   ) {
     this.observer = new IntersectionObserver(entries => {
       for (const entry of entries) {
@@ -95,6 +97,16 @@ export class PageThumbnails {
       if (this.disposed) return;
       context.drawImage(bitmap, placement.x, 0, placement.width, placement.height);
       pdfPage.cleanup();
+    }
+    for (const image of this.image ? page.images ?? [] : []) {
+      if (image.y > height) continue;
+      try {
+        // Decode at preview size only; a missing image leaves the preview without it.
+        const bitmap = await createImageBitmap(await this.image!(image.assetId), {resizeWidth: Math.max(1, Math.ceil(image.width * scale)), resizeHeight: Math.max(1, Math.ceil(image.height * scale))});
+        if (this.disposed) { bitmap.close(); return; }
+        context.drawImage(bitmap, image.x, image.y, image.width, image.height);
+        bitmap.close();
+      } catch { /* keep the rest of the preview */ }
     }
     for (const stroke of page.strokes) drawStroke(context, stroke, 0, 0, height);
     canvas.dataset.previewReady = 'true';

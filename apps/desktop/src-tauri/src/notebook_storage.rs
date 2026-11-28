@@ -3,6 +3,16 @@ use super::*;
 use std::collections::{BTreeMap, HashSet};
 
 pub const MAX_PAGE_HEIGHT: f64 = 1_000_000_000.0;
+pub const MAX_PAGE_IMAGES: usize = 50;
+/// Smallest placed side in document units (matches packages/core).
+const MIN_IMAGE_SIZE: f64 = 12.0;
+
+/// An image placed on a page; the bytes are a content-addressed local asset.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PageImage {
+    pub id: String, pub asset_id: String, pub x: f64, pub y: f64, pub width: f64, pub height: f64, pub order: i64,
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -21,7 +31,11 @@ pub struct SyncTarget { pub notebook_id:String, pub server:String }
 #[serde(rename_all = "camelCase")]
 pub struct NotePage {
     pub id: String, pub title: String, pub width: f64, pub height: f64,
-    pub background: Option<PdfBackground>, pub strokes: Vec<Stroke>, pub next_order: i64,
+    pub background: Option<PdfBackground>, pub strokes: Vec<Stroke>,
+    /// Omitted when empty, so pages without images keep their previous JSON form.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<PageImage>,
+    pub next_order: i64,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Topic { pub id: String, pub title: String, pub pages: Vec<NotePage> }
@@ -32,7 +46,13 @@ pub struct NotebookLoad { pub notebook: Notebook, pub secret: String }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PageEdit {
-    pub id: String, pub page_id: String, pub insert: Vec<Stroke>, pub remove: Vec<String>, pub height: f64,
+    pub id: String, pub page_id: String, pub insert: Vec<Stroke>, pub remove: Vec<String>,
+    // Omitted when empty: stroke-only edits keep their digest and stay readable for older servers.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub insert_images: Vec<PageImage>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remove_images: Vec<String>,
+    pub height: f64,
 }
 
 pub(super) fn random_hex(bytes: usize) -> StorageResult<String> {
@@ -107,7 +127,8 @@ impl Database {
 
     pub fn edit_page(&mut self, edit: &PageEdit) -> StorageResult<()> {
         if !identity(&edit.id)||!identity(&edit.page_id)||!edit.height.is_finite()||edit.height<=0.0||edit.height>MAX_PAGE_HEIGHT
-            ||edit.insert.len()>1000||edit.remove.len()>1000||edit.remove.iter().any(|id|!identity(id)) {return Err("Invalid page edit.".into());}
+            ||edit.insert.len()>1000||edit.remove.len()>1000||edit.remove.iter().any(|id|!identity(id))
+            ||edit.insert_images.len()>MAX_PAGE_IMAGES||edit.remove_images.len()>MAX_PAGE_IMAGES||edit.remove_images.iter().any(|id|!identity(id)) {return Err("Invalid page edit.".into());}
         let digest=crate::pdf_assets::sha256_hex(serde_json::to_vec(edit)?);
         let transaction=self.connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         if let Some(existing)=transaction.query_row("SELECT digest FROM applied_edits WHERE id=?1",[&edit.id],|row|row.get::<_,String>(0)).optional()?{
@@ -129,12 +150,41 @@ impl Database {
             }else{transaction.execute("INSERT INTO strokes VALUES(?1,?2,?3,?4)",params![stroke.id,edit.page_id,order,serde_json::to_string(stroke)?])?;}
             transaction.execute("UPDATE pages SET next_order=MAX(next_order,?1) WHERE id=?2",params![order+1,edit.page_id])?;
         }
+        let mut image_ids=HashSet::new();
+        for image in &edit.insert_images{
+            validate_image(image,&page)?;
+            if !image_ids.insert(&image.id){return Err("Duplicate image identity.".into());}
+            // The file must be stored before the page references it.
+            if !crate::image_assets::exists(&self.image_directory,&image.asset_id){return Err("The image file is missing locally.".into());}
+        }
+        for id in &edit.remove_images {transaction.execute("DELETE FROM images WHERE page_id=?1 AND id=?2",params![edit.page_id,id])?;}
+        for image in &edit.insert_images{
+            let existing:Option<(String,String)>=transaction.query_row("SELECT page_id,data FROM images WHERE id=?1",[&image.id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+            if let Some((page,data))=existing{
+                let stored:PageImage=serde_json::from_str(&data)?;
+                if page!=edit.page_id||stored!=*image{return Err("Conflicting stored image.".into());}
+            }else{transaction.execute("INSERT INTO images VALUES(?1,?2,?3,?4)",params![image.id,edit.page_id,image.order,serde_json::to_string(image)?])?;}
+            transaction.execute("UPDATE pages SET next_order=MAX(next_order,?1) WHERE id=?2",params![image.order+1,edit.page_id])?;
+        }
+        let images:i64=transaction.query_row("SELECT count(*) FROM images WHERE page_id=?1",[&edit.page_id],|r|r.get(0))?;
+        if images as usize>MAX_PAGE_IMAGES{return Err(format!("Höchstens {MAX_PAGE_IMAGES} Bilder pro Seite.").into());}
         transaction.execute("UPDATE pages SET height=?1 WHERE id=?2",params![height,edit.page_id])?;
         transaction.execute("INSERT INTO applied_edits VALUES(?1,?2,?3)",params![edit.id,edit.page_id,digest])?;
         let notebook:String=transaction.query_row("SELECT document_id FROM pages WHERE id=?1",[&edit.page_id],|r|r.get(0))?;
         super::sync::queue_change(&transaction,&notebook,&serde_json::json!({"type":"edit","edit":edit}))?;
         transaction.commit()?;Ok(())
     }
+}
+
+pub(super) fn validate_image(image:&PageImage,page:&PageSize)->StorageResult<()>{
+    let finite=[image.x,image.y,image.width,image.height].iter().all(|v|v.is_finite());
+    // A thousandth of a unit absorbs rounding at the page edge, as in packages/core.
+    if !identity(&image.id)||image.asset_id.len()!=64||!image.asset_id.bytes().all(|b|b.is_ascii_digit()||(b'a'..=b'f').contains(&b))||!finite
+        ||image.x<0.0||image.y<0.0||image.width<MIN_IMAGE_SIZE||image.height<MIN_IMAGE_SIZE
+        ||image.x+image.width>page.width+1e-3||image.y+image.height>page.height+1e-3||image.order<0||image.order>9_007_199_254_740_990{
+        return Err("Invalid image placement.".into());
+    }
+    Ok(())
 }
 
 pub(super) fn validate_notebook_background(pdf:&PdfBackground)->StorageResult<()>{
@@ -171,7 +221,16 @@ fn read_page(connection: &Connection, id: &str) -> StorageResult<NotePage> {
         if stroke.id != identity || position < 0 { return Err("Invalid stored stroke identity or order.".into()); }
         stroke.order = Some(position); next = next.max(position+1); strokes.push(stroke);
     }
+    let image_rows = connection.prepare("SELECT id,data FROM images WHERE page_id=?1 ORDER BY position")?
+        .query_map([id], |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?)))?.collect::<Result<Vec<_>,_>>()?;
+    let mut images = Vec::new();
+    for (identity,data) in image_rows {
+        let image: PageImage = serde_json::from_str(&data)?;
+        validate_image(&image, &PageSize {width,height})?;
+        if image.id != identity { return Err("Invalid stored image identity.".into()); }
+        next = next.max(image.order+1); images.push(image);
+    }
     let background: Option<PdfBackground> = background.map(|data| serde_json::from_str(&data)).transpose()?;
     if let Some(pdf)=&background { validate_notebook_background(pdf)?; }
-    Ok(NotePage {id:id.into(),title,width,height,background,strokes,next_order:next})
+    Ok(NotePage {id:id.into(),title,width,height,background,strokes,images,next_order:next})
 }

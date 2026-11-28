@@ -63,5 +63,5 @@ def seed_database(path):
         db.execute("INSERT INTO topics VALUES('local-topic','local-document','Mitschrift',0)")
         db.execute("INSERT INTO pages(id,document_id,width,height,topic_id,next_order) VALUES('local-page','local-document',1200,1600,'local-topic',1)")
         db.execute("INSERT INTO strokes VALUES('seed-ink','local-page',0,?)",(json.dumps(stroke),))
-        db.execute('PRAGMA user_version=1')
+        db.execute('PRAGMA user_version=1')  # a release 0.2 database; the app migrates it to 2
     return stroke

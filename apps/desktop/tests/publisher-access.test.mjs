@@ -19,7 +19,7 @@ function setup(){
     const timers=new Map();let id=0;
     globalThis.window={setTimeout(callback,delay){timers.set(++id,{callback,delay});return id;},clearTimeout(id){timers.delete(id);}};
     const state=snapshot(),states=[];
-    const publisher=new DeltaPublisher(()=>state,SECRET,async()=>new Uint8Array(),value=>states.push(value),{
+    const publisher=new DeltaPublisher(()=>state,SECRET,async()=>new Uint8Array(),async()=>new Uint8Array(),value=>states.push(value),{
         status:async()=>({sequence:0,head:HEAD,firstPending:null}),
         checkpoint:async()=>({sequence:0,head:HEAD,notebook:state.notebook}),
         outgoing:async()=>[],acknowledge:async()=>{},preview:()=>state,

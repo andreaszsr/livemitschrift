@@ -165,6 +165,7 @@ impl Database {
         }
         tx.execute("DELETE FROM applied_edits WHERE page_id IN (SELECT id FROM pages WHERE topic_id=?1)", [topic])?;
         tx.execute("DELETE FROM strokes WHERE page_id IN (SELECT id FROM pages WHERE topic_id=?1)", [topic])?;
+        tx.execute("DELETE FROM images WHERE page_id IN (SELECT id FROM pages WHERE topic_id=?1)", [topic])?;
         tx.execute("DELETE FROM pages WHERE topic_id=?1", [topic])?;
         tx.execute("DELETE FROM topics WHERE id=?1", [topic])?;
         queue_structure(&tx, book)?;
@@ -186,6 +187,7 @@ impl Database {
         }
         tx.execute("DELETE FROM applied_edits WHERE page_id IN (SELECT id FROM pages WHERE document_id=?1)", [book])?;
         tx.execute("DELETE FROM strokes WHERE page_id IN (SELECT id FROM pages WHERE document_id=?1)", [book])?;
+        tx.execute("DELETE FROM images WHERE page_id IN (SELECT id FROM pages WHERE document_id=?1)", [book])?;
         for table in ["pages", "topics", "outbox", "sync_targets"] {
             tx.execute(&format!("DELETE FROM {table} WHERE document_id=?1"), [book])?;
         }
@@ -194,9 +196,10 @@ impl Database {
         self.prune_pdfs();
         Ok(())
     }
-    /// Best effort: remove local PDF copies no page references any more.
-    /// PDFs are content-addressed and may be shared by several topics.
+    /// Best effort: remove local PDF and image copies nothing references any more.
+    /// Assets are content-addressed and may be shared by several pages.
     fn prune_pdfs(&self) {
+        self.prune_images();
         let Ok(mut statement) = self.connection.prepare("SELECT background FROM pages WHERE background IS NOT NULL") else { return };
         let Ok(rows) = statement.query_map([], |r| r.get::<_, String>(0)) else { return };
         let used: std::collections::HashSet<String> = rows.flatten()
@@ -212,6 +215,15 @@ impl Database {
                 }
             }
         }
+    }
+    fn prune_images(&self) {
+        let Ok(mut statement) = self.connection.prepare("SELECT data FROM images") else { return };
+        let Ok(rows) = statement.query_map([], |r| r.get::<_, String>(0)) else { return };
+        // A database error must never look like "nothing is used".
+        let Ok(rows) = rows.collect::<Result<Vec<_>, _>>() else { return };
+        let used = rows.iter().filter_map(|json| serde_json::from_str::<Value>(json).ok())
+            .filter_map(|value| value.get("assetId").and_then(Value::as_str).map(str::to_owned)).collect();
+        crate::image_assets::prune(&self.image_directory, &used);
     }
     pub fn reorder_items(&mut self, book: Option<&str>, ids: &[String]) -> StorageResult<()> {
         let tx = self

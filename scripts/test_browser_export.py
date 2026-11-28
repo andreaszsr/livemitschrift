@@ -80,6 +80,15 @@ class Browser:
         raise RuntimeError(f'Browser condition timed out: {expression}; {detail}')
 
 
+def fixture_png():
+    """A valid 4x3 RGB PNG for the page-image fixture."""
+    import struct, zlib
+    def chunk(kind, data):
+        return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))
+    rows = b''.join(b'\0' + bytes([200, 60, 40]) * 4 for _ in range(3))
+    return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', 4, 3, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b'')
+
+
 def publish_fixture(base):
     path = ROOT/'tmp/pdfs/livemitschrift-two-pages.pdf'
     data = path.read_bytes(); asset = hashlib.sha256(data).hexdigest()
@@ -93,6 +102,9 @@ def publish_fixture(base):
                       'strokes': [{'id': f'ink-{index}', 'order': 0, 'color': '#b44049', 'width': 7,
                                    'complete': True, 'points': [{'x': 100, 'y': 100, 'pressure': .4},
                                                                {'x': 1000, 'y': end, 'pressure': 1}]}]})
+    image = fixture_png(); image_asset = hashlib.sha256(image).hexdigest()
+    pages[0]['images'] = [{'id': 'fixture-image', 'assetId': image_asset, 'x': 700, 'y': 1200, 'width': 400, 'height': 300, 'order': 1}]
+    pages[0]['nextOrder'] = 2
     state = {'type': 'notebook', 'notebook': {'id': 'book', 'title': 'Reader test',
              'topics': [{'id': 'topic', 'title': 'Browser Export', 'pages': pages}]},
              'position': {'pageId': 'page-0', 'y': 0}}
@@ -101,6 +113,9 @@ def publish_fixture(base):
         page['strokes'] = []
     with httpx.Client(trust_env=False) as client:
         response = client.post(base+'/api/sync/pdf/'+asset, content=data,
+                               headers={'Authorization': 'Bearer '+SECRET, 'X-LiveMitschrift-Publisher-Key': KEY})
+        response.raise_for_status()
+        response = client.post(base+'/api/sync/image/'+image_asset, content=image,
                                headers={'Authorization': 'Bearer '+SECRET, 'X-LiveMitschrift-Publisher-Key': KEY})
         response.raise_for_status()
     with connect(base.replace('http', 'ws')+'/ws/sync/v2/publish', proxy=None) as writer:
@@ -146,6 +161,8 @@ def main():
                     browser.call('Network.enable')
                     browser.call('Page.navigate',{'url':base+'/notebook/'+identity})
                     browser.wait("document.getElementById('connection')?.dataset.state==='waiting'&&!!document.querySelector('#toolbar [data-action=export]:not(:disabled)')")
+                    # The reader shows the page image from the server, below the ink.
+                    browser.wait("(() => {const i=document.querySelector('.image-layer img');return !!i&&i.complete&&i.naturalWidth===4&&!i.classList.contains('image-loading');})()")
                     before=browser.evaluate("({page:document.querySelector('.page-count').textContent,scroll:document.getElementById('viewport').scrollTop,follow:document.getElementById('follow-return').hidden})")
                     browser.evaluate("document.querySelector('#toolbar [data-action=export]').click();true")
                     browser.wait("!document.getElementById('export-download').hidden")
@@ -154,6 +171,7 @@ def main():
                     while not file.is_file() and time.monotonic()<deadline: time.sleep(.1)
                     document=PdfReader(file)
                     assert len(document.pages)==4 and document.metadata.title=='Browser Export'
+                    assert len(document.pages[0].images)==1 and not document.pages[1].images, 'The page image belongs on the first slice only.'
                     assert 'LiveMitschrift' in document.pages[0].extract_text()
                     browser.evaluate("document.getElementById('export-close').click();true")
                     after=browser.evaluate("({page:document.querySelector('.page-count').textContent,scroll:document.getElementById('viewport').scrollTop,follow:document.getElementById('follow-return').hidden})")
@@ -196,7 +214,7 @@ def main():
                     assert 'Privatnotiz-7f3a' not in (directory/'server.log').read_text()
                     destination=ROOT/'output/pdf/student-browser-export.pdf'; destination.parent.mkdir(parents=True,exist_ok=True)
                     shutil.copyfile(file,destination)
-                    print('BROWSER_EXPORT_PASS actual four-page Chrome download, both PDF slides and long ink, unchanged navigation/Follow, no writer credentials; private note survives reload with a safe link, exports as a PDF comment, never reaches the network and is deleted from the overview; instructor disconnected.')
+                    print('BROWSER_EXPORT_PASS actual four-page Chrome download, both PDF slides, a page image and long ink, unchanged navigation/Follow, no writer credentials; private note survives reload with a safe link, exports as a PDF comment, never reaches the network and is deleted from the overview; instructor disconnected.')
             finally:
                 stop(chrome); stop(server)
 

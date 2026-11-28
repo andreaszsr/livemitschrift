@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .notebook import Page, Snapshot, EditEvent, MAX_POINTS
 from .room import ProtocolError
-from .protocol import MAX_NOTEBOOK_ASSETS, MAX_NOTEBOOK_ASSET_BYTES
+from .protocol import MAX_NOTEBOOK_ASSETS, MAX_NOTEBOOK_ASSET_BYTES, MAX_NOTEBOOK_IMAGES, MAX_NOTEBOOK_IMAGE_BYTES
 
 class QuotaExceeded(ProtocolError):
     pass
@@ -87,6 +87,10 @@ class PageStore:
             db.execute("CREATE TABLE IF NOT EXISTS tokens(id INTEGER PRIMARY KEY, hash TEXT NOT NULL UNIQUE, user_id INTEGER NOT NULL REFERENCES users(id), label TEXT NOT NULL, created INTEGER NOT NULL, last_used INTEGER, revoked INTEGER NOT NULL DEFAULT 0)")
             if "owner_id" not in {row[1] for row in db.execute("PRAGMA table_info(notebooks)")}:
                 db.execute("ALTER TABLE notebooks ADD COLUMN owner_id INTEGER REFERENCES users(id)")
+            # Additive (release 0.3): page images share the assets table. The schema version is
+            # unchanged, so a 0.2 server can still open the database after a rollback.
+            if "kind" not in {row[1] for row in db.execute("PRAGMA table_info(assets)")}:
+                db.execute("ALTER TABLE assets ADD COLUMN kind TEXT NOT NULL DEFAULT 'pdf'")
             db.execute("PRAGMA user_version=2")
 
     @contextmanager
@@ -149,8 +153,15 @@ class PageStore:
         for topic in state["notebook"]["topics"]:
             for page in topic["pages"]:
                 asset = page["background"]
-                if asset and not db.execute("SELECT 1 FROM assets WHERE identity=? AND asset_id=?", (identity, asset["assetId"])).fetchone():
+                if asset and not db.execute("SELECT 1 FROM assets WHERE identity=? AND asset_id=? AND kind='pdf'", (identity, asset["assetId"])).fetchone():
                     raise ProtocolError("Upload PDF resources before their references.")
+                PageStore._image_resources(db, identity, page.get("images", []))
+
+    @staticmethod
+    def _image_resources(db: sqlite3.Connection, identity: str, images: list[dict[str, Any]]) -> None:
+        for image in images:
+            if not db.execute("SELECT 1 FROM assets WHERE identity=? AND asset_id=? AND kind='image'", (identity, image["assetId"])).fetchone():
+                raise ProtocolError("Upload images before their references.")
 
     def owner(self, identity: str) -> int | None:
         with self.connect() as db:
@@ -225,13 +236,16 @@ class PageStore:
                 self._resources(db, identity, state)
                 for topic in state["notebook"]["topics"]:
                     for page in topic["pages"]:
-                        if page["strokes"]:
-                            raise ProtocolError("Structure must not contain ink.")
+                        if page["strokes"] or page.get("images"):
+                            raise ProtocolError("Structure must not contain ink or images.")
                         existing = db.execute("SELECT metadata FROM pages WHERE identity=? AND page_id=?", (identity, page["id"])).fetchone()
                         if existing:
                             old = json.loads(existing[0])
                             page["height"] = max(page["height"], old["height"])
                             page["nextOrder"] = max(page["nextOrder"], old["nextOrder"])
+                            # Images are page content like ink; structure changes keep them.
+                            if old.get("images"):
+                                page["images"] = old["images"]
                             db.execute("UPDATE pages SET metadata=? WHERE identity=? AND page_id=?", (encoded(page), identity, page["id"]))
                         else:
                             self._write_page(db, identity, page, head)
@@ -247,6 +261,17 @@ class PageStore:
                 strokes = [s for s in page["strokes"] if s["id"] not in removed]
                 strokes.extend(s.model_dump(by_alias=True) for s in edit.insert)
                 page.update(strokes=sorted(strokes, key=lambda s: s["order"]), height=max(page["height"], edit.height), nextOrder=max(page["nextOrder"], max((s["order"] + 1 for s in strokes), default=0)))
+                if edit.insert_images or edit.remove_images:
+                    self._image_resources(db, identity, [i.model_dump(by_alias=True) for i in edit.insert_images])
+                    removed_images = set(edit.remove_images)
+                    images = [i for i in page.get("images", []) if i["id"] not in removed_images]
+                    if any(i["id"] == image.id for i in images for image in edit.insert_images):
+                        raise ProtocolError("Conflicting image identity.")
+                    images.extend(i.model_dump(by_alias=True) for i in edit.insert_images)
+                    page["images"] = sorted(images, key=lambda i: i["order"])
+                    page["nextOrder"] = max(page["nextOrder"], max((i["order"] + 1 for i in images), default=0))
+                    if not page["images"]:
+                        del page["images"]
                 checked = Page.model_validate(page)
                 if sum(len(s.points) for s in checked.strokes) > MAX_POINTS or len(encoded(page).encode()) > MAX_PAGE_BYTES:
                     raise ProtocolError("Page ink limit reached.")
@@ -258,22 +283,29 @@ class PageStore:
             db.execute("INSERT INTO commits VALUES(?,?,?)", (identity, sequence, digest))
         return True
 
-    def asset(self, identity: str, asset_id: str) -> bytes | None:
+    def asset(self, identity: str, asset_id: str, kind: str = "pdf") -> bytes | None:
         with self.connect() as db:
-            row = db.execute("SELECT data FROM assets WHERE identity=? AND asset_id=?", (identity, asset_id)).fetchone()
+            row = db.execute("SELECT data FROM assets WHERE identity=? AND asset_id=? AND kind=?", (identity, asset_id, kind)).fetchone()
         if row and hashlib.sha256(row[0]).hexdigest() != asset_id:
-            raise ProtocolError("Damaged server PDF resource.")
+            raise ProtocolError("Damaged server resource.")
         return row[0] if row else None
 
-    def put_asset(self, identity: str, asset_id: str, data: bytes) -> None:
+    def put_asset(self, identity: str, asset_id: str, data: bytes, kind: str = "pdf") -> None:
+        """Store a content-addressed PDF or image; PDFs and images have separate budgets."""
+        limits = {"pdf": (MAX_NOTEBOOK_ASSETS, MAX_NOTEBOOK_ASSET_BYTES, "Notebook PDF limit reached."),
+                  "image": (MAX_NOTEBOOK_IMAGES, MAX_NOTEBOOK_IMAGE_BYTES, "Notebook image limit reached.")}
+        max_count, max_bytes, message = limits[kind]
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            if db.execute("SELECT 1 FROM assets WHERE identity=? AND asset_id=?", (identity, asset_id)).fetchone():
+            existing = db.execute("SELECT kind FROM assets WHERE identity=? AND asset_id=?", (identity, asset_id)).fetchone()
+            if existing:
+                if existing[0] != kind:
+                    raise ProtocolError("Resource already stored with another type.")
                 return
-            count, size = db.execute("SELECT count(*),COALESCE(sum(length(data)),0) FROM assets WHERE identity=?", (identity,)).fetchone()
-            if count >= MAX_NOTEBOOK_ASSETS or size + len(data) > MAX_NOTEBOOK_ASSET_BYTES:
-                raise ProtocolError("Notebook PDF limit reached.")
-            db.execute("INSERT INTO assets VALUES(?,?,?)", (identity, asset_id, data))
+            count, size = db.execute("SELECT count(*),COALESCE(sum(length(data)),0) FROM assets WHERE identity=? AND kind=?", (identity, kind)).fetchone()
+            if count >= max_count or size + len(data) > max_bytes:
+                raise ProtocolError(message)
+            db.execute("INSERT INTO assets(identity,asset_id,data,kind) VALUES(?,?,?,?)", (identity, asset_id, data, kind))
 
 
     def is_withdrawn(self, identity: str) -> bool:

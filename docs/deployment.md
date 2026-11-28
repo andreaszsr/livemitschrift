@@ -198,6 +198,11 @@ docker compose pull
 docker compose up -d --wait
 ```
 
+Release 0.3 adds page images. Update the server before the desktop app: a 0.2
+server rejects image uploads, and the app then reports that the server needs an
+update. A rollback to 0.2 keeps the database readable only while no page holds an
+image; otherwise restore the backup taken before the update.
+
 Never use `docker compose down --volumes` on a real installation: it deletes notes
 and certificates. For rollback use the previous image and, if schemas changed, its
 matching snapshot. Keep the publisher key stable across updates. To rotate it,
@@ -211,7 +216,9 @@ Defaults: 96 readers, 128 total WebSockets, 32 active HTTP handlers, two PDF
 extractions, two concurrent page exports (10 s queue, then HTTP 503 with
 `Retry-After`), 128 notebooks and a 4 GiB SQLite limit. PDFs may be up to 50 MB;
 each notebook holds at most 128 PDFs and 500 MB of PDF data, plus up to 500 MB of
-cached single-page extracts. Per-client queues and request rates are bounded;
+cached single-page extracts. Page images may be up to 10 MB and 4096 px per side;
+each notebook holds at most 2000 images and 500 MB of image data, and a page at
+most 50 images. Per-client queues and request rates are bounded;
 slow readers and readers over their request budget reconnect (close code 1013).
 Students behind one campus NAT share the per-IP limits; run the 50-reader test
 from a single public IP. The shared encoded-page cache targets

@@ -20,3 +20,11 @@ export function storePdfAsset(bytes: Uint8Array): Promise<string> {
 export async function readPdfAsset(assetId: string): Promise<Uint8Array> {
   return new Uint8Array(await invoke<ArrayBuffer>("read_pdf_asset", { assetId }));
 }
+
+export function storeImageAsset(bytes: Uint8Array): Promise<string> {
+  return invoke("store_image_asset", bytes);
+}
+
+export async function readImageAsset(assetId: string): Promise<Uint8Array> {
+  return new Uint8Array(await invoke<ArrayBuffer>("read_image_asset", { assetId }));
+}

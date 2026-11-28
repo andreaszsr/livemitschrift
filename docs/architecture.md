@@ -55,7 +55,15 @@ system does not support collaborative editing.
   - Supported operations: whole-stroke erasing, undo/redo, lasso move,
     copy/cut/paste.
   - Local copies of imported PDFs.
-  - PDF export and portable `.livemitschrift` backups.
+  - Page images: content-addressed PNG/JPEG files next to the PDF copies
+    (header-checked, at most 10 MB and 4096 px); placements live in an `images`
+    table (schema version 2, migrated additively from version 1; release 0.2
+    cannot open a migrated database). Images lie above the PDF and below the
+    ink, newest on top; moves and resizes are remove + insert edits like lasso
+    moves. The editor re-encodes inserted images (≤ 2400 px, JPEG or PNG with
+    transparency), dropping EXIF metadata.
+  - PDF export and portable `.livemitschrift` backups (format version 2 with
+    `image/` entries when a notebook has images; version 1 otherwise).
   - PDF export writes into a folder the user chose; the folder (per notebook)
     and the last exported page (per topic) are local preferences. The Rust
     command accepts only a plain file name and asks before replacing a file.
@@ -79,7 +87,11 @@ system does not support collaborative editing.
 3. If the server has no base for the notebook, a staged recovery takes place.
    The publisher sends metadata and then each page, and the server commits the
    result atomically.
-4. PDF assets are immutable and identified by their SHA-256 hash.
+4. PDF and image assets are immutable and identified by their SHA-256 hash.
+   The publisher uploads them before the operations that reference them; image
+   edits are sent only as durable commits, never as transient live events, so
+   readers never see a reference to a missing file. Pages and edits without
+   images keep their previous JSON form, so stroke-only traffic is unchanged.
 5. Readers receive the notebook structure and the content of the page they have
    selected, not every page.
    - Cached pages are checked against their revision before reuse.
@@ -108,7 +120,11 @@ system does not support collaborative editing.
 - **Ownership.** Each notebook has one owner. See [SECURITY.md](../SECURITY.md).
 - **TLS.** TLS terminates at Caddy. Forwarded headers are trusted only from
   Caddy's fixed private address. The backend publishes no host port.
-- **Limits.** Frame, transfer, page and PDF sizes are bounded, as are queues,
+- **Images.** Placements are part of the page metadata; files share the assets
+  table (column `kind`, added without a schema version change so a 0.2 server
+  can still open the database). Readers get only images a page currently shows,
+  with a fixed media type and `nosniff`.
+- **Limits.** Frame, transfer, page, PDF and image sizes are bounded, as are queues,
   connection counts, request rates and database size. The defaults are in
   [deployment](deployment.md#limits-and-monitoring).
 
