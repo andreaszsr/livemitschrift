@@ -20,6 +20,10 @@ test('normal text wraps at spaces, keeps explicit breaks and splits only overlon
   assert.ok(long.lines.length > 1 && long.lines.every(line => measureText(line, false, 28) <= width + 1e-6));
   assert.equal(long.lines.join(''), 'https://example.org/sehr/langer/pfad');
   assert.deepEqual(layoutText('a\n\nb', 'small', false, 500).lines, ['a', '', 'b']);
+  // Start offsets locate each line in the text, also after dropped spaces and explicit breaks.
+  const text = 'Skript zur Vorlesung\nhttps://example.org/sehr/langer/pfad', layout = layoutText(text, 'medium', false, width);
+  layout.lines.forEach((line, index) => assert.equal(text.slice(layout.starts[index], layout.starts[index] + line.length), line));
+  assert.deepEqual(layoutText('a\n\nb', 'small', false, 500).starts, [0, 2, 3]);
 });
 
 test('code wraps at any character and keeps spaces; height and baseline follow the line count', () => {

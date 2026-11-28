@@ -11,6 +11,8 @@ import type { PageText, TextSize } from "./texts.js";
  */
 export interface TextLayout {
   lines: string[];
+  /** Index of each line's first character in the text (UTF-16 code units). */
+  starts: number[];
   /** Font size and line height in document units. */
   fontSize: number;
   lineHeight: number;
@@ -58,26 +60,36 @@ export function measureText(text: string, code: boolean, fontSize: number): numb
 export function layoutText(text: string, size: TextSize, code: boolean, width: number): TextLayout {
   const fontSize = TEXT_FONT_SIZE[size], lineHeight = fontSize * TEXT_LINE_HEIGHT;
   const fits = (line: string): boolean => measureText(line, code, fontSize) <= width + 1e-6;
-  const lines: string[] = [];
+  const lines: string[] = [], starts: number[] = [];
+  let offset = 0;
   for (const paragraph of text.split("\n")) {
-    if (code) { lines.push(...splitCharacters(paragraph, fits)); continue; }
+    // Lines are substrings of the paragraph; locate each one to know where it starts.
+    let cursor = offset;
+    const push = (line: string): void => {
+      const start = text.indexOf(line, cursor);
+      starts.push(start < 0 ? cursor : start);
+      cursor = (start < 0 ? cursor : start) + line.length;
+      lines.push(line);
+    };
+    if (code) { for (const line of splitCharacters(paragraph, fits)) push(line); offset += paragraph.length + 1; continue; }
     let line = "";
     for (const word of paragraph.split(" ")) {
       const candidate = line ? `${line} ${word}` : word;
       if (fits(candidate)) { line = candidate; continue; }
-      if (line) lines.push(line);
+      if (line) push(line);
       if (fits(word)) { line = word; continue; }
       const pieces = splitCharacters(word, fits);
-      lines.push(...pieces.slice(0, -1));
+      for (const piece of pieces.slice(0, -1)) push(piece);
       line = pieces.at(-1) ?? "";
     }
-    lines.push(line);
+    push(line);
+    offset += paragraph.length + 1;
   }
   const { metrics } = font(textFontMetrics(code));
   // CSS half-leading: the glyph box (ascent + descent) is centred in the line box.
   const glyphHeight = (metrics.ascent - metrics.descent) * fontSize / metrics.unitsPerEm;
   const baseline = (lineHeight - glyphHeight) / 2 + metrics.ascent * fontSize / metrics.unitsPerEm;
-  return { lines, fontSize, lineHeight, height: lines.length * lineHeight, baseline };
+  return { lines, starts, fontSize, lineHeight, height: lines.length * lineHeight, baseline };
 }
 
 /** Greedy split at character boundaries; always at least one character per line. */

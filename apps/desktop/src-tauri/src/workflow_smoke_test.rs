@@ -17,6 +17,8 @@ fn drag_action(webview:&Webview<Wry>,id:&str,target:&str,before:Option<&str>,can
         const handle=document.querySelector('.customizer-row[data-id='+{id}+'] .customizer-grip');
         const zone=document.querySelector('.customizer-zone[data-target='+{target}+']');
         const before={before},row=before?zone.querySelector('[data-id='+before+']'):null;
+        // A long list can push the drop zone out of the dialog's visible area.
+        (row??zone).scrollIntoView({{block:'nearest'}});
         const source=handle.getBoundingClientRect(),dest=(row??zone).getBoundingClientRect();
         const x=dest.left+12,y=row?dest.top+2:dest.bottom-8;
         handle.dispatchEvent(new PointerEvent('pointerdown',{{pointerId:41,button:0,buttons:1,clientX:source.left+8,clientY:source.top+8,bubbles:true,cancelable:true}}));
@@ -456,6 +458,46 @@ fn library(webview:&Webview<Wry>,directory:&Path)->TestResult<()> {
     wait_for(webview,"document.getElementById('share-status').textContent==='Live · Serverstand bestätigt'")?;
     wait_for(reader.as_ref(),"(() => {const i=[...document.querySelectorAll('.image-layer img')];return i.length===3&&i.every(e=>e.complete&&e.naturalWidth>0&&!e.classList.contains('image-loading'));})()")?;
     println!("IMAGES_PASS file insert, lasso move and corner resize, undo, delete, clipboard paste and Finder-style drop, copy and paste under the pointer, live reader shows uploaded images");
+    // Text boxes. WebKit must set the bundled fonts with exactly the advance widths of the metrics table
+    // (reference values computed from packages/core/src/text-metrics.ts), or line breaks would differ.
+    wait_for(webview,"document.fonts.check('100px \"LiveMitschrift Sans\"')&&document.fonts.check('100px \"LiveMitschrift Mono\"')||(document.fonts.load('100px \"LiveMitschrift Sans\"'),document.fonts.load('100px \"LiveMitschrift Mono\"'),false)")?;
+    let widths=evaluate(webview,"(() => {const measure=(text,family)=>{const box=document.createElement('div');box.className='text-box';box.style.cssText=`position:absolute;font-size:100px;font-family:${family}`;const line=document.createElement('span');line.className='text-line';line.textContent=text;box.append(line);document.getElementById('paper').append(box);const width=line.getBoundingClientRect().width;box.remove();return width;};return [measure('Vorlesung Ä∑→','\"LiveMitschrift Sans\"'),measure('MMMMMMMMMM','\"LiveMitschrift Mono\"')];})()")?;
+    if (widths[0].as_f64().unwrap_or(0.0)-712.1).abs()>0.5 || (widths[1].as_f64().unwrap_or(0.0)-600.0).abs()>0.5 {
+        return Err(format!("Text box font widths differ from the metrics table: {widths}").into());
+    }
+    action(webview,"text")?;
+    let tap=|x:f64,y:f64|evaluate(webview,&format!("(() => {{const v=document.getElementById('viewport').getBoundingClientRect(),send=(phase,buttons)=>window.dispatchEvent(new CustomEvent('livemitschrift-native-input',{{detail:{{phase,x:v.left+{x},y:v.top+{y},pointerType:'mouse',pressure:0,buttons,button:0,eraser:false}}}}));send('down',1);send('up',0);return true;}})()"));
+    tap(200.0,520.0)?;
+    wait_for(webview,"document.activeElement===document.querySelector('.text-editor textarea')")?;
+    control_help(webview)?;
+    evaluate(webview,"(() => {const f=document.querySelector('.text-editor textarea');f.value='Skript zur Vorlesung mit einem längeren Satz, der umbrechen muss: https://example.org/vorlesung/skript';f.dispatchEvent(new Event('input'));return true;})()")?;
+    click(webview,".text-options button:last-child")?;
+    wait_for(webview,"(() => {const b=document.querySelector('.text-layer .text-box');if(!b||document.querySelector('.text-editor'))return false;const lines=[...b.querySelectorAll('.text-line')],width=b.getBoundingClientRect().width;return lines.length>=2&&lines.every(l=>{const r=document.createRange();r.selectNodeContents(l);return r.getBoundingClientRect().width<=width+1;})&&[...b.querySelectorAll('a')].every(a=>a.href==='https://example.org/vorlesung/skript');})()")?;
+    // The live reader shows the same lines and a clickable link.
+    wait_for(reader.as_ref(),"(() => {const b=document.querySelector('.text-layer .text-box');return !!b&&b.querySelectorAll('.text-line').length>=2&&!!b.querySelector('a[href=\"https://example.org/vorlesung/skript\"]');})()")?;
+    let lines=evaluate(webview,"[...document.querySelector('.text-layer .text-box').querySelectorAll('.text-line')].map(l=>l.textContent)")?;
+    let reader_lines=evaluate(reader.as_ref(),"[...document.querySelector('.text-layer .text-box').querySelectorAll('.text-line')].map(l=>l.textContent)")?;
+    if lines!=reader_lines {return Err(format!("Reader lines {reader_lines} differ from editor lines {lines}").into());}
+    // Lasso: a tap selects, the right handle narrows the box (more lines), a double tap edits, Esc ends editing.
+    action(webview,"lasso")?;
+    let count=|webview:&Webview<Wry>|->TestResult<u64>{Ok(evaluate(webview,"document.querySelector('.text-layer .text-box').querySelectorAll('.text-line').length")?.as_u64().unwrap_or(0))};
+    let before=count(webview)?;
+    evaluate(webview,"(() => {const r=document.querySelector('.text-layer .text-box').getBoundingClientRect(),send=(phase,x,buttons)=>window.dispatchEvent(new CustomEvent('livemitschrift-native-input',{detail:{phase,x,y:r.top+r.height/2,pointerType:'mouse',pressure:0,buttons,button:0,eraser:false}}));send('down',r.left+20,1);send('up',r.left+20,0);return true;})()")?;
+    wait_for(webview,"!document.querySelector('.text-selection').hidden")?;
+    evaluate(webview,"(() => {const r=document.querySelector('.text-layer .text-box').getBoundingClientRect(),send=(phase,x,buttons)=>window.dispatchEvent(new CustomEvent('livemitschrift-native-input',{detail:{phase,x,y:r.top+r.height/2,pointerType:'mouse',pressure:0,buttons,button:0,eraser:false}}));send('down',r.right,1);send('drag',r.right-r.width/4,1);send('drag',r.right-r.width/2,1);send('up',r.right-r.width/2,0);return true;})()")?;
+    wait_for(webview,&format!("document.querySelector('.text-layer .text-box').querySelectorAll('.text-line').length>{before}"))?;
+    evaluate(webview,"(() => {const r=document.querySelector('.text-layer .text-box').getBoundingClientRect(),send=(phase,buttons)=>window.dispatchEvent(new CustomEvent('livemitschrift-native-input',{detail:{phase,x:r.left+20,y:r.top+10,pointerType:'mouse',pressure:0,buttons,button:0,eraser:false}}));for(let i=0;i<2;i++){send('down',1);send('up',0);}return true;})()")?;
+    wait_for(webview,"document.querySelector('.text-editor textarea')?.value.startsWith('Skript zur Vorlesung')")?;
+    evaluate(webview,"document.querySelector('.text-editor textarea').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));true")?;
+    wait_for(webview,"!document.querySelector('.text-editor')&&document.querySelectorAll('.text-layer .text-box').length===1")?;
+    // Delete and undo.
+    evaluate(webview,"(() => {const r=document.querySelector('.text-layer .text-box').getBoundingClientRect(),send=(phase,buttons)=>window.dispatchEvent(new CustomEvent('livemitschrift-native-input',{detail:{phase,x:r.left+20,y:r.top+10,pointerType:'mouse',pressure:0,buttons,button:0,eraser:false}}));send('down',1);send('up',0);return true;})()")?;
+    wait_for(webview,"!document.querySelector('.text-selection').hidden")?;
+    evaluate(webview,"document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'Backspace',bubbles:true}));true")?;
+    wait_for(webview,"document.querySelectorAll('.text-layer .text-box').length===0")?;
+    action(webview,"undo")?;
+    wait_for(webview,"document.querySelectorAll('.text-layer .text-box').length===1")?;
+    println!("TEXTS_PASS bundled font widths match the metrics table in WebKit; create, wrap, link, identical reader lines, lasso select, width, double-tap edit, delete and undo");
     println!("LIBRARY_PASS native vector PDF export, portable backup, safe copied restore, rename, durable publish and HTTP reader");
     fs::write(directory.join("library-passed"),"ready")?;Ok(())
 }

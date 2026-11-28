@@ -127,3 +127,29 @@ test('page images are embedded once, below the ink, on the slices they cover', a
     const without = await PDFDocument.load(await exportTopicPdf({id: 't', title: 'Images', pages: [first]}, async () => { throw Error('no PDF'); }));
     assert.deepEqual(without.getPages().map(imagesOn), [0, 0], 'without a reader the export stays as before');
 });
+
+test('text boxes are real text in the bundled fonts, with link annotations, on the slices they cover', async () => {
+    const {readFile} = await import('node:fs/promises');
+    const {PDFName, PDFArray, PDFDict} = await import('pdf-lib');
+    const {layoutText} = await import('@livemitschrift/core');
+    const fonts = {sans: new Uint8Array(await readFile(new URL('../../ui/src/fonts/LiveMitschriftSans.ttf', import.meta.url))),
+        mono: new Uint8Array(await readFile(new URL('../../ui/src/fonts/LiveMitschriftMono.ttf', import.meta.url)))};
+    const text = 'Skript zur Vorlesung über Integrale ∑ und ∫ – mehr unter https://example.org/skript bitte lesen';
+    const target = page();
+    target.texts = [{id: 'note', x: 100, y: 200, width: 400, text, size: 'medium', color: '#243147', code: false, order: 0},
+        {id: 'code', x: 100, y: 600, width: 300, text: '  print("ä")', size: 'small', color: '#000000', code: true, order: 1}];
+    target.nextOrder = 2;
+    await assert.rejects(exportTopicPdf({id: 't', title: 'Texte', pages: [target]}, async () => { throw Error('no PDF'); }), /Schriften/);
+    const bytes = await exportTopicPdf({id: 't', title: 'Texte', pages: [target]}, async () => { throw Error('no PDF'); }, {readFonts: async () => fonts});
+    await mkdir(new URL('../../../output/pdf/', import.meta.url), {recursive: true});
+    await writeFile(new URL('../../../output/pdf/text-boxes-export.pdf', import.meta.url), bytes);
+    const document = await PDFDocument.load(bytes), first = document.getPages()[0];
+    const links = first.node.lookupMaybe(PDFName.of('Annots'), PDFArray)?.asArray().map(ref => document.context.lookup(ref))
+        .filter(annot => annot.get(PDFName.of('Subtype'))?.toString() === '/Link') ?? [];
+    const lines = layoutText(text, 'medium', false, 400).lines;
+    const linkLines = lines.filter(line => line.includes('https') || line.includes('example') || line.includes('skript'));
+    assert.ok(links.length >= 1 && links.length <= linkLines.length, `${links.length} links`);
+    assert.ok(links.every(link => link.lookup(PDFName.of('A'), PDFDict).lookup(PDFName.of('URI')).decodeText() === 'https://example.org/skript'));
+    const fontNames = first.node.Resources().lookup(PDFName.of('Font'), PDFDict).values().map(ref => document.context.lookup(ref).lookup(PDFName.of('BaseFont')).toString());
+    assert.ok(fontNames.some(name => name.includes('LiveMitschriftSans')) && fontNames.some(name => name.includes('LiveMitschriftMono')), fontNames.join());
+});

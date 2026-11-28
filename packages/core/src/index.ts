@@ -19,3 +19,4 @@ export * from "./texts.js";
 export * from "./text-layout.js";
 export type { FontMetrics } from "./text-metrics.js";
 export { MONO_METRICS, SANS_METRICS } from "./text-metrics.js";
+export * from "./links.js";

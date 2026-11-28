@@ -24,9 +24,41 @@ pub async fn open_live_viewer(url: String) -> Result<(), String> {
     }).await.map_err(|error| error.to_string())?
 }
 
+/// Links in text boxes: only https and mailto, without credentials.
+fn external_url(value: &str) -> Result<tauri::Url, String> {
+    let url = tauri::Url::parse(value).map_err(|error| error.to_string())?;
+    let valid = match url.scheme() {
+        "https" => url.host_str().is_some() && url.username().is_empty() && url.password().is_none(),
+        "mailto" => !url.path().is_empty(),
+        _ => false,
+    };
+    if !valid || value.len() > 2000 { return Err("Only https and mailto links can be opened.".into()); }
+    Ok(url)
+}
+
+#[tauri::command]
+pub async fn open_link(url: String) -> Result<(), String> {
+    let url = external_url(&url)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        // The URL is one argument of `open`, never interpreted by a shell.
+        let status = std::process::Command::new("open").arg(url.as_str())
+            .status().map_err(|error| error.to_string())?;
+        if status.success() { Ok(()) } else { Err("Cannot open the link.".into()) }
+    }).await.map_err(|error| error.to_string())?
+}
+
 #[cfg(test)]
 mod tests {
-    use super::viewer_url;
+    use super::{external_url, viewer_url};
+    #[test]
+    fn text_box_links_open_only_https_and_mailto() {
+        assert!(external_url("https://example.org/skript?x=1#a").is_ok());
+        assert!(external_url("mailto:dozent@example.org").is_ok());
+        for url in ["http://example.org", "file:///etc/passwd", "javascript:alert(1)", "https://user:pw@example.org", "tel:123", "mailto:"] {
+            assert!(external_url(url).is_err(), "{url}");
+        }
+    }
+
     #[test]
     fn opens_only_http_read_links_and_rejects_other_schemes_or_commands() {
         assert!(viewer_url(&format!("http://127.0.0.1:8000/notebook/{}", "a".repeat(64))).is_ok());

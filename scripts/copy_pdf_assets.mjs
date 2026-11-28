@@ -1,5 +1,5 @@
 // Keep worker, fonts and decoders at local URLs in both deployment targets.
-import { cp, mkdir, readdir, writeFile } from "node:fs/promises";
+import { cp, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
@@ -11,8 +11,11 @@ const vendor = join(root, "packages/pdf/dist/vendor");
 await mkdir(vendor, { recursive: true });
 await cp(join(source, "LICENSE"), join(vendor, "LICENSE"));
 await cp(join(root, 'node_modules/pdf-lib/dist/pdf-lib.esm.min.js'), join(vendor, 'pdf-lib.min.mjs'));
-// Embeds the text box fonts in PDF exports.
-await cp(join(root, 'node_modules/@pdf-lib/fontkit/dist/fontkit.es.min.js'), join(vendor, 'fontkit.min.mjs'));
+// Embeds the text box fonts in PDF exports. The ES build imports "pako" by bare name, which
+// the bundler-free reader view cannot resolve; the UMD build includes pako, so wrap it as a module
+// (in module scope `this` is undefined and the UMD wrapper assigns `self.fontkit`).
+const fontkitUmd = await readFile(join(root, 'node_modules/@pdf-lib/fontkit/dist/fontkit.umd.min.js'), 'utf8');
+await writeFile(join(vendor, 'fontkit.min.mjs'), `const self = globalThis;\n${fontkitUmd}\nexport default globalThis.fontkit;\n`);
 for (const name of ["pdf.min.mjs", "pdf.worker.min.mjs"]) {
   await cp(join(source, "build", name), join(vendor, name));
 }

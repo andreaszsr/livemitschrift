@@ -19,6 +19,7 @@ from test_support import ROOT, start_server, stop
 
 KEY, SECRET, HEAD = 'd'*64, '7'*64, 'a'*64
 NOTE = 'Privatnotiz-7f3a mit Link https://example.org/skript.'
+TEXT = 'Material zur Vorlesung über Integrale ∑ und ∫ unter https://example.org/material bitte vorher lesen.'
 
 
 def student_notes(browser, base, identity):
@@ -104,7 +105,8 @@ def publish_fixture(base):
                                                                {'x': 1000, 'y': end, 'pressure': 1}]}]})
     image = fixture_png(); image_asset = hashlib.sha256(image).hexdigest()
     pages[0]['images'] = [{'id': 'fixture-image', 'assetId': image_asset, 'x': 700, 'y': 1200, 'width': 400, 'height': 300, 'order': 1}]
-    pages[0]['nextOrder'] = 2
+    pages[0]['texts'] = [{'id': 'fixture-text', 'x': 100, 'y': 1300, 'width': 420, 'text': TEXT, 'size': 'medium', 'color': '#243147', 'code': False, 'order': 2}]
+    pages[0]['nextOrder'] = 3
     state = {'type': 'notebook', 'notebook': {'id': 'book', 'title': 'Reader test',
              'topics': [{'id': 'topic', 'title': 'Browser Export', 'pages': pages}]},
              'position': {'pageId': 'page-0', 'y': 0}}
@@ -163,6 +165,10 @@ def main():
                     browser.wait("document.getElementById('connection')?.dataset.state==='waiting'&&!!document.querySelector('#toolbar [data-action=export]:not(:disabled)')")
                     # The reader shows the page image from the server, below the ink.
                     browser.wait("(() => {const i=document.querySelector('.image-layer img');return !!i&&i.complete&&i.naturalWidth===4&&!i.classList.contains('image-loading');})()")
+                    # Chrome draws each text box line with exactly the widths of the shared metrics table.
+                    browser.wait("document.fonts.check('20px \"LiveMitschrift Sans\"')&&!!document.querySelector('.text-layer .text-box a[href=\"https://example.org/material\"]')")
+                    widths = browser.evaluate("import('@livemitschrift/core').then(core => {const box=document.querySelector('.text-layer .text-box'),scale=box.getBoundingClientRect().width/420;return [...box.querySelectorAll('.text-line')].map(line => {const range=document.createRange();range.selectNodeContents(line);return [line.textContent, range.getBoundingClientRect().width/scale, core.measureText(line.textContent,false,28)];});})")
+                    assert len(widths) >= 3 and all(abs(drawn - expected) < 0.75 for _, drawn, expected in widths), widths
                     before=browser.evaluate("({page:document.querySelector('.page-count').textContent,scroll:document.getElementById('viewport').scrollTop,follow:document.getElementById('follow-return').hidden})")
                     browser.evaluate("document.querySelector('#toolbar [data-action=export]').click();true")
                     browser.wait("!document.getElementById('export-download').hidden")
@@ -172,6 +178,10 @@ def main():
                     document=PdfReader(file)
                     assert len(document.pages)==4 and document.metadata.title=='Browser Export'
                     assert len(document.pages[0].images)==1 and not document.pages[1].images, 'The page image belongs on the first slice only.'
+                    page_text = ' '.join(document.pages[0].extract_text().split())
+                    assert 'Integrale ∑ und ∫' in page_text and 'https://example.org/material' in page_text, page_text
+                    links = [a.get_object() for a in document.pages[0].get('/Annots', []) if a.get_object().get('/Subtype') == '/Link']
+                    assert links and all(a['/A']['/URI'] == 'https://example.org/material' for a in links), links
                     assert 'LiveMitschrift' in document.pages[0].extract_text()
                     browser.evaluate("document.getElementById('export-close').click();true")
                     after=browser.evaluate("({page:document.querySelector('.page-count').textContent,scroll:document.getElementById('viewport').scrollTop,follow:document.getElementById('follow-return').hidden})")
@@ -187,7 +197,7 @@ def main():
                     browser.wait("!document.getElementById('export-download').hidden&&!!window.__exportBlob")
                     encoded=browser.evaluate("window.__exportBlob.arrayBuffer().then(b=>{let s='';for(const c of new Uint8Array(b))s+=String.fromCharCode(c);return btoa(s);})")
                     noted=ROOT/'output/pdf/student-notes-export.pdf'; noted.write_bytes(base64.b64decode(encoded))
-                    comments=[annotation.get_object() for annotation in PdfReader(noted).pages[0].get('/Annots', [])]
+                    comments=[annotation.get_object() for annotation in PdfReader(noted).pages[0].get('/Annots', []) if annotation.get_object().get('/Subtype')=='/Text']
                     assert [(c['/Subtype'], c['/Contents']) for c in comments]==[('/Text', NOTE)], comments
                     browser.evaluate("document.getElementById('export-close').click();true")
                     # Printable text alone (comments off) still lists the note on an extra page.
@@ -199,7 +209,7 @@ def main():
                     printed=ROOT/'output/pdf/student-notes-print.pdf'; printed.write_bytes(base64.b64decode(encoded))
                     reader=PdfReader(printed)
                     assert len(reader.pages)==5 and 'Privatnotiz-7f3a' in reader.pages[3].extract_text(), [page.extract_text()[:80] for page in reader.pages]
-                    assert not any(page.get('/Annots') for page in reader.pages), 'Comments were exported although switched off.'
+                    assert not any(a.get_object().get('/Subtype')=='/Text' for page in reader.pages for a in page.get('/Annots', [])), 'Comments were exported although switched off.'
                     browser.evaluate("document.getElementById('export-close').click();true")
                     sent=[json.dumps(event['params']) for event in browser.events if event['method'] in ('Network.requestWillBeSent','Network.webSocketFrameSent')]
                     assert not any('Privatnotiz-7f3a' in item for item in sent), 'A note left the browser during export.'
@@ -214,7 +224,7 @@ def main():
                     assert 'Privatnotiz-7f3a' not in (directory/'server.log').read_text()
                     destination=ROOT/'output/pdf/student-browser-export.pdf'; destination.parent.mkdir(parents=True,exist_ok=True)
                     shutil.copyfile(file,destination)
-                    print('BROWSER_EXPORT_PASS actual four-page Chrome download, both PDF slides, a page image and long ink, unchanged navigation/Follow, no writer credentials; private note survives reload with a safe link, exports as a PDF comment, never reaches the network and is deleted from the overview; instructor disconnected.')
+                    print('BROWSER_EXPORT_PASS actual four-page Chrome download, both PDF slides, a page image, a text box (Chrome widths match the metrics, PDF text and link) and long ink, unchanged navigation/Follow, no writer credentials; private note survives reload with a safe link, exports as a PDF comment, never reaches the network and is deleted from the overview; instructor disconnected.')
             finally:
                 stop(chrome); stop(server)
 

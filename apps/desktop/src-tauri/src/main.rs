@@ -39,6 +39,7 @@ fn main() {
             persistence::close_app,
             persistence::toggle_fullscreen,
             browser::open_live_viewer,
+            browser::open_link,
             persistence::store_pdf_asset,
             persistence::read_pdf_asset,
             persistence::store_image_asset,

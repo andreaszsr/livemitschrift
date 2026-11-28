@@ -13,6 +13,11 @@ export function openLiveViewer(url: string): Promise<void> {
   return invoke("open_live_viewer", { url });
 }
 
+/** Open an https or mailto link from a text box in the default app. */
+export function openLink(url: string): Promise<void> {
+  return invoke("open_link", { url });
+}
+
 export function storePdfAsset(bytes: Uint8Array): Promise<string> {
   return invoke("store_pdf_asset", bytes);
 }
