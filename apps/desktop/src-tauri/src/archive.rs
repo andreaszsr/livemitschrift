@@ -1,5 +1,5 @@
 //! Portable, versioned ZIP backups. Import always creates a separate notebook.
-use super::notebooks::{identity, new_id, random_hex, title, validate_notebook_background};
+use super::notebooks::{identity, new_id, random_hex, title, validate_image, validate_notebook_background, MAX_PAGE_IMAGES};
 use super::*;
 use std::{
     collections::HashSet,
@@ -7,11 +7,20 @@ use std::{
 };
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
+use crate::image_assets::{MAX_IMAGE_BYTES, MAX_NOTEBOOK_IMAGES};
 use crate::pdf_assets::{MAX_NOTEBOOK_PDFS, MAX_NOTEBOOK_PDF_BYTES, MAX_PDF_BYTES};
 
 const MAX_MANIFEST: u64 = 16_000_000;
-/// Manifest plus all PDFs; ZIP entries are stored uncompressed.
-pub const MAX_ARCHIVE: u64 = MAX_MANIFEST + MAX_NOTEBOOK_PDF_BYTES as u64 + 4_000_000;
+/// Image bytes per backup; images are downscaled when inserted, so this is generous.
+const MAX_NOTEBOOK_IMAGE_BYTES: usize = 500_000_000;
+/// Manifest plus all PDFs and images; ZIP entries are stored uncompressed.
+pub const MAX_ARCHIVE: u64 = MAX_MANIFEST + MAX_NOTEBOOK_PDF_BYTES as u64 + MAX_NOTEBOOK_IMAGE_BYTES as u64 + 4_000_000;
+/// Version 1 has no images; it is still written for notebooks without images,
+/// so such backups stay readable by older releases.
+const VERSION_WITH_IMAGES: u32 = 2;
+
+/// Content-addressed resources referenced by a notebook.
+struct Assets { pdfs: HashSet<String>, images: HashSet<String> }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Manifest {
@@ -20,10 +29,11 @@ struct Manifest {
     notebook: Notebook,
 }
 
-fn validate(notebook: &Notebook) -> StorageResult<HashSet<String>> {
+fn validate(notebook: &Notebook) -> StorageResult<Assets> {
     title(&notebook.title)?;
     let mut ids = HashSet::new();
     let mut assets = HashSet::new();
+    let mut images = HashSet::new();
     let mut pages = 0;
     let mut points = 0;
     if notebook.topics.is_empty() || notebook.topics.len() > 1000 {
@@ -74,12 +84,25 @@ fn validate(notebook: &Notebook) -> StorageResult<HashSet<String>> {
                     return Err("Invalid backup stroke identity/order/count.".into());
                 }
             }
+            if page.images.len() > MAX_PAGE_IMAGES {
+                return Err("Too many images on a backup page.".into());
+            }
+            for image in &page.images {
+                validate_image(image, &PageSize { width: page.width, height: page.height })?;
+                if !ids.insert(image.id.clone()) || image.order >= page.next_order {
+                    return Err("Invalid backup image identity/order.".into());
+                }
+                images.insert(image.asset_id.clone());
+            }
         }
     }
     if assets.len() > MAX_NOTEBOOK_PDFS {
         return Err(format!("Backup exceeds PDF resource limit ({MAX_NOTEBOOK_PDFS}).").into());
     }
-    Ok(assets)
+    if images.len() > MAX_NOTEBOOK_IMAGES {
+        return Err(format!("Backup exceeds image limit ({MAX_NOTEBOOK_IMAGES}).").into());
+    }
+    Ok(Assets { pdfs: assets, images })
 }
 
 impl Database {
@@ -88,7 +111,7 @@ impl Database {
         let assets = validate(&notebook)?;
         let manifest = serde_json::to_vec(&Manifest {
             format: "LiveMitschrift".into(),
-            version: 1,
+            version: if assets.images.is_empty() { 1 } else { VERSION_WITH_IMAGES },
             notebook,
         })?;
         if manifest.len() as u64 > MAX_MANIFEST {
@@ -99,7 +122,7 @@ impl Database {
         archive.start_file("notebook.json", options)?;
         archive.write_all(&manifest)?;
         let mut total = 0;
-        for asset in assets {
+        for asset in assets.pdfs {
             let bytes = self.read_pdf(&asset)?;
             total += bytes.len();
             if total > MAX_NOTEBOOK_PDF_BYTES {
@@ -108,14 +131,24 @@ impl Database {
             archive.start_file(format!("pdf/{asset}.pdf"), options)?;
             archive.write_all(&bytes)?;
         }
+        let mut total = 0;
+        for asset in assets.images {
+            let bytes = self.read_image(&asset)?;
+            total += bytes.len();
+            if total > MAX_NOTEBOOK_IMAGE_BYTES {
+                return Err("Notebook images exceed 500 MB.".into());
+            }
+            archive.start_file(format!("image/{asset}.image"), options)?;
+            archive.write_all(&bytes)?;
+        }
         Ok(archive.finish()?.into_inner())
     }
     pub fn restore_notebook(&mut self, bytes: &[u8]) -> StorageResult<String> {
         if bytes.len() as u64 > MAX_ARCHIVE {
-            return Err("Backup exceeds 520 MB.".into());
+            return Err("Backup exceeds 1 GB.".into());
         }
         let mut archive = ZipArchive::new(Cursor::new(bytes))?;
-        if archive.len() > MAX_NOTEBOOK_PDFS + 1 {
+        if archive.len() > MAX_NOTEBOOK_PDFS + MAX_NOTEBOOK_IMAGES + 1 {
             return Err("Too many backup entries.".into());
         }
         let mut names = HashSet::new();
@@ -125,10 +158,10 @@ impl Database {
             total += entry.size();
             // zip 9 rejects names it cannot decode unambiguously instead of guessing.
             let name = entry.name()?.into_owned();
-            let limit = if name == "notebook.json" { MAX_MANIFEST } else { MAX_PDF_BYTES as u64 };
+            let limit = if name == "notebook.json" { MAX_MANIFEST } else if name.starts_with("image/") { MAX_IMAGE_BYTES as u64 } else { MAX_PDF_BYTES as u64 };
             if !names.insert(name)
                 || entry.size() > limit
-                || total > MAX_MANIFEST + MAX_NOTEBOOK_PDF_BYTES as u64
+                || total > MAX_ARCHIVE
             {
                 return Err("Invalid backup entry/size.".into());
             }
@@ -146,12 +179,16 @@ impl Database {
             version,
             mut notebook,
         } = serde_json::from_slice(&data)?;
-        if format != "LiveMitschrift" || version != 1 {
+        if format != "LiveMitschrift" || !(1..=VERSION_WITH_IMAGES).contains(&version) {
             return Err("Unsupported LiveMitschrift backup version.".into());
         }
-        let assets = validate(&notebook)?;
+        let Assets { pdfs: assets, images } = validate(&notebook)?;
+        if version == 1 && !images.is_empty() {
+            return Err("Backup version 1 cannot contain images.".into());
+        }
         let expected: HashSet<_> = std::iter::once("notebook.json".to_owned())
             .chain(assets.iter().map(|id| format!("pdf/{id}.pdf")))
+            .chain(images.iter().map(|id| format!("image/{id}.image")))
             .collect();
         if names != expected {
             return Err("Backup resources do not match its manifest.".into());
@@ -172,8 +209,23 @@ impl Database {
             }
             resources.push(bytes);
         }
+        let mut image_files = Vec::new();
+        for asset in images {
+            let mut bytes = Vec::new();
+            archive
+                .by_name(&format!("image/{asset}.image"))?
+                .take(MAX_IMAGE_BYTES as u64 + 1)
+                .read_to_end(&mut bytes)?;
+            if crate::image_assets::validate(&bytes).is_err() || crate::pdf_assets::sha256_hex(&bytes) != asset {
+                return Err("Damaged backup image.".into());
+            }
+            image_files.push(bytes);
+        }
         for bytes in resources {
             self.store_pdf(&bytes)?;
+        }
+        for bytes in image_files {
+            self.store_image(&bytes)?;
         }
         notebook.id = new_id("book")?;
         let tx = self
@@ -200,6 +252,10 @@ impl Database {
                             serde_json::to_string(stroke)?
                         ],
                     )?;
+                }
+                for image in &mut page.images {
+                    image.id = new_id("image")?;
+                    tx.execute("INSERT INTO images VALUES(?1,?2,?3,?4)", params![image.id, page.id, image.order, serde_json::to_string(image)?])?;
                 }
             }
         }

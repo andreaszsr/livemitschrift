@@ -50,7 +50,7 @@ pub async fn open_database(
 #[tauri::command]
 pub async fn store_pdf_asset(state: State<'_, PersistenceState>, request: tauri::ipc::Request<'_>) -> Result<String, String> {
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else { return Err("Expected PDF bytes.".into()); };
-    if bytes.len() > crate::pdf_assets::MAX_PDF_BYTES { return Err("PDF exceeds 10 MB.".into()); }
+    if bytes.len() > crate::pdf_assets::MAX_PDF_BYTES { return Err("PDF exceeds 50 MB.".into()); }
     let bytes = bytes.clone();
     let state = state.0.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -67,6 +67,20 @@ pub async fn read_pdf_asset(state: State<'_, PersistenceState>, asset_id: String
         let bytes = slot.as_ref().ok_or("Load the local document first.")?.read_pdf(&asset_id).map_err(|error| error.to_string())?;
         Ok(tauri::ipc::Response::new(bytes))
     }).await.map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn store_image_asset(state: State<'_, PersistenceState>, request: tauri::ipc::Request<'_>) -> Result<String, String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else { return Err("Expected image bytes.".into()); };
+    if bytes.len() > crate::image_assets::MAX_IMAGE_BYTES { return Err("Images may be at most 10 MB.".into()); }
+    let bytes = bytes.clone();
+    with_database(state.0.clone(), move |database| database.store_image(&bytes)).await
+}
+
+#[tauri::command]
+pub async fn read_image_asset(state: State<'_, PersistenceState>, asset_id: String) -> Result<tauri::ipc::Response, String> {
+    let bytes = with_database(state.0.clone(), move |database| database.read_image(&asset_id)).await?;
+    Ok(tauri::ipc::Response::new(bytes))
 }
 
 #[tauri::command]

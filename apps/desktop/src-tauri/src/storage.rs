@@ -9,7 +9,8 @@ use std::{
 };
 
 pub type StorageResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
-const SCHEMA_VERSION: i64 = 1;
+/// 1: release 0.1/0.2; 2: adds `images` (release 0.3).
+const SCHEMA_VERSION: i64 = 2;
 pub const DOCUMENT_ID: &str = "local-document";
 pub const PAGE_ID: &str = "local-page";
 
@@ -73,6 +74,7 @@ pub struct Database {
     // a second app instance must not edit a stale in-memory copy of this page.
     _writer_lock: File,
     asset_directory: PathBuf,
+    image_directory: PathBuf,
 }
 
 impl Database {
@@ -86,8 +88,9 @@ impl Database {
         connection.busy_timeout(Duration::from_secs(1))?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
         connection.pragma_update(None, "synchronous", "FULL")?;
-        let asset_directory = path.parent().ok_or("Database has no parent directory.")?.join("pdf");
-        let mut database = Self { connection, _writer_lock: writer_lock, asset_directory };
+        let parent = path.parent().ok_or("Database has no parent directory.")?;
+        let (asset_directory, image_directory) = (parent.join("pdf"), parent.join("image"));
+        let mut database = Self { connection, _writer_lock: writer_lock, asset_directory, image_directory };
         database.migrate()?;
         Ok(database)
     }
@@ -100,8 +103,12 @@ impl Database {
             transaction.execute("INSERT INTO documents(id,title,secret,sync_head) VALUES(?1,'Meine Notizen',?2,?3)",params![DOCUMENT_ID,notebooks::random_hex(32)?,notebooks::random_hex(32)?])?;
             transaction.execute("INSERT INTO topics VALUES('local-topic',?1,'Mitschrift',0)",[DOCUMENT_ID])?;
             transaction.execute("INSERT INTO pages(id,document_id,width,height,topic_id) VALUES(?1,?2,1200,1600,'local-topic')",params![PAGE_ID,DOCUMENT_ID])?;
+        } else if version == 1 {
+            // Additive step: existing notebooks, outbox and acknowledgements stay untouched.
+            transaction.execute_batch("CREATE TABLE IF NOT EXISTS images(id TEXT PRIMARY KEY,page_id TEXT NOT NULL REFERENCES pages(id),position INTEGER NOT NULL CHECK(position>=0),data TEXT NOT NULL);
+                CREATE INDEX IF NOT EXISTS image_page ON images(page_id);")?;
         } else if version != SCHEMA_VERSION {
-            return Err(format!("Unsupported database version {version}; release 0.1 supports {SCHEMA_VERSION}.").into());
+            return Err(format!("Unsupported database version {version}; this release supports up to {SCHEMA_VERSION}. Please update LiveMitschrift.").into());
         }
         transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         transaction.commit()?;
@@ -147,6 +154,14 @@ impl Database {
 
     pub fn read_pdf(&self, identity: &str) -> StorageResult<Vec<u8>> {
         crate::pdf_assets::read(&self.asset_directory, identity)
+    }
+
+    pub fn store_image(&self, bytes: &[u8]) -> StorageResult<String> {
+        crate::image_assets::store(&self.image_directory, bytes)
+    }
+
+    pub fn read_image(&self, identity: &str) -> StorageResult<Vec<u8>> {
+        crate::image_assets::read(&self.image_directory, identity)
     }
 
     #[cfg(test)] // legacy single-page API, exercised by storage tests

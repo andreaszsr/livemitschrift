@@ -6,6 +6,7 @@ mod storage;
 mod persistence;
 mod browser;
 mod pdf_assets;
+mod image_assets;
 mod notebook_commands;
 mod file_commands;
 mod publisher_credentials;
@@ -40,6 +41,8 @@ fn main() {
             browser::open_live_viewer,
             persistence::store_pdf_asset,
             persistence::read_pdf_asset,
+            persistence::store_image_asset,
+            persistence::read_image_asset,
             notebook_commands::load_library,
             notebook_commands::load_notebook,
             notebook_commands::create_notebook,
