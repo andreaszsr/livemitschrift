@@ -2,7 +2,7 @@
 import hashlib
 from typing import Annotated, Literal
 from pydantic import Field, TypeAdapter, model_serializer, model_validator
-from .protocol import MAX_PAGE_IMAGES, MessageModel
+from .protocol import MAX_PAGE_IMAGES, MAX_PAGE_TEXTS, MAX_TEXT_LENGTH, MessageModel
 from .room import Client, ProtocolError, Room
 
 MAX_POINTS = 2_000_000
@@ -68,6 +68,25 @@ class PageImage(MessageModel):
         return self
 
 
+class PageText(MessageModel):
+    """A typed text box; its height follows from the client's text layout and is not stored."""
+    id: Identity
+    x: float = Field(ge=0, le=1200)
+    y: float = Field(ge=0, le=MAX_HEIGHT)
+    width: float = Field(ge=60, le=1200)
+    text: str = Field(min_length=1, max_length=MAX_TEXT_LENGTH)
+    size: Literal["small", "medium", "large"]
+    color: str = Field(pattern=r"^#[a-fA-F0-9]{6}$")
+    code: bool = Field(strict=True)
+    order: int = Field(ge=0, le=9_007_199_254_740_990, strict=True)
+
+    @model_validator(mode="after")
+    def inside_width(self) -> "PageText":
+        if self.x + self.width > 1200 + EDGE or not self.text.strip():
+            raise ValueError("Text box outside the page width or empty.")
+        return self
+
+
 def omit_empty_images(data: dict, *keys: str) -> dict:
     """Pages and edits without images keep their previous JSON form (and digests)."""
     for key in keys:
@@ -84,11 +103,12 @@ class Page(MessageModel):
     background: Background | None
     strokes: list[Stroke] = Field(max_length=50_000)
     images: list[PageImage] = Field(default_factory=list, max_length=MAX_PAGE_IMAGES)
+    texts: list[PageText] = Field(default_factory=list, max_length=MAX_PAGE_TEXTS)
     next_order: int = Field(alias="nextOrder", ge=0, le=9_007_199_254_740_991)
 
     @model_serializer(mode="wrap")
     def omit_images(self, handler):
-        return omit_empty_images(handler(self), "images")
+        return omit_empty_images(handler(self), "images", "texts")
 
     @model_validator(mode="after")
     def consistent(self) -> "Page":
@@ -102,6 +122,8 @@ class Page(MessageModel):
             raise ValueError("Duplicate image identity.")
         if any(i.y + i.height > self.height + EDGE or i.order >= self.next_order for i in self.images):
             raise ValueError("Image outside page geometry/order.")
+        if len({t.id for t in self.texts}) != len(self.texts) or any(t.y > self.height or t.order >= self.next_order for t in self.texts):
+            raise ValueError("Duplicate text box or text box outside page geometry/order.")
         return self
 
 
@@ -173,11 +195,14 @@ class Edit(MessageModel):
     remove: list[Identity] = Field(max_length=1000)
     insert_images: list[PageImage] = Field(default_factory=list, alias="insertImages", max_length=MAX_PAGE_IMAGES)
     remove_images: list[Identity] = Field(default_factory=list, alias="removeImages", max_length=MAX_PAGE_IMAGES)
+    insert_texts: list[PageText] = Field(default_factory=list, alias="insertTexts", max_length=MAX_PAGE_TEXTS)
+    remove_texts: list[Identity] = Field(default_factory=list, alias="removeTexts", max_length=MAX_PAGE_TEXTS)
     height: float = Field(gt=0, le=MAX_HEIGHT)
 
     @model_serializer(mode="wrap")
     def omit_images(self, handler):
-        return omit_empty_images(handler(self), "insertImages", "removeImages", "insert_images", "remove_images")
+        return omit_empty_images(handler(self), "insertImages", "removeImages", "insert_images", "remove_images",
+                                 "insertTexts", "removeTexts", "insert_texts", "remove_texts")
 
     @model_validator(mode="after")
     def completed(self) -> "Edit":
@@ -189,6 +214,10 @@ class Edit(MessageModel):
             raise ValueError("Image outside page extent.")
         if len(set(self.remove_images)) != len(self.remove_images) or len({i.id for i in self.insert_images}) != len(self.insert_images):
             raise ValueError("Duplicate image identities.")
+        if any(t.y > self.height for t in self.insert_texts):
+            raise ValueError("Text box outside page extent.")
+        if len(set(self.remove_texts)) != len(self.remove_texts) or len({t.id for t in self.insert_texts}) != len(self.insert_texts):
+            raise ValueError("Duplicate text box identities.")
         return self
 
 
@@ -284,6 +313,17 @@ class NotebookRoom(Room):
                         raise ProtocolError("Page image limit reached.")
                     page.images = sorted(images, key=lambda i: i.order)
                     page.next_order = max(page.next_order, max((i.order + 1 for i in images), default=0))
+                if edit.insert_texts or edit.remove_texts:
+                    removed_texts = set(edit.remove_texts)
+                    texts = [t for t in page.texts if t.id not in removed_texts]
+                    for box in edit.insert_texts:
+                        if any(t.id == box.id for t in texts):
+                            raise ProtocolError("Conflicting text box identity.")
+                        texts.append(box)
+                    if len(texts) > MAX_PAGE_TEXTS:
+                        raise ProtocolError("Page text box limit reached.")
+                    page.texts = sorted(texts, key=lambda t: t.order)
+                    page.next_order = max(page.next_order, max((t.order + 1 for t in texts), default=0))
                 page.height = max(page.height, edit.height)
                 self.point_count = points
                 self.edits[edit.id] = digest

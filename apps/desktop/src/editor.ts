@@ -314,7 +314,7 @@ class Editor {
             return;
         }
         this.growPage(current.y + current.height);
-        this.commitEdit(this.history().record(this.current.id, this.current.height, [], [], {insert: [current], removed: [original]}));
+        this.commitEdit(this.history().record(this.current.id, this.current.height, [], [], {images: {insert: [current], removed: [original]}}));
     }
     private growPage(bottom: number): void {
         if (bottom <= this.current.height) return;
@@ -343,7 +343,7 @@ class Editor {
     }
     private addImage(image: PageImage): void {
         this.growPage(image.y + image.height);
-        this.commitEdit(this.history().record(this.current.id, this.current.height, [], [], {insert: [image], removed: []}));
+        this.commitEdit(this.history().record(this.current.id, this.current.height, [], [], {images: {insert: [image], removed: []}}));
         this.clearSelection();
         this.tool = 'lasso';
         this.selectImage(image.id);
@@ -361,7 +361,7 @@ class Editor {
         const image = this.pageImage(this.selectedImage);
         if (!image || !this.ready || this.busy) return;
         this.selectImage(null);
-        this.commitEdit(this.history().record(this.current.id, this.current.height, [], [], {insert: [], removed: [image]}));
+        this.commitEdit(this.history().record(this.current.id, this.current.height, [], [], {images: {insert: [], removed: [image]}}));
     }
     private pasteImage(): void {
         const clipboard = this.imageClipboard;

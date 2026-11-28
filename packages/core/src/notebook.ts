@@ -2,6 +2,8 @@ import type { Operation, PageSize, PdfBackground, Point, Stroke } from "./protoc
 import { validPdfBackground } from "./pdf.js";
 import { MAX_PAGE_IMAGES, validPageImage } from "./images.js";
 import type { PageImage } from "./images.js";
+import { MAX_PAGE_TEXTS, validPageText } from "./texts.js";
+import type { PageText } from "./texts.js";
 export const MAX_DOCUMENT_HEIGHT = 1000000000;
 export const MAX_NOTEBOOK_BYTES = 16000000;
 export const MAX_NOTEBOOK_POINTS = 2000000;
@@ -13,6 +15,8 @@ export interface NotePage extends PageSize {
     strokes: Stroke[];
     /** Absent on pages without images (and from older clients). */
     images?: PageImage[];
+    /** Absent on pages without text boxes. */
+    texts?: PageText[];
     nextOrder: number;
 }
 export interface Topic {
@@ -38,6 +42,9 @@ export interface PageEdit {
     /** Image changes; absent when an edit touches strokes only, so such edits stay readable for older servers. */
     insertImages?: PageImage[];
     removeImages?: string[];
+    /** Text box changes; absent when unused, like the image fields. */
+    insertTexts?: PageText[];
+    removeTexts?: string[];
     height: number;
 }
 export type NotebookEvent = {
@@ -99,12 +106,16 @@ export function validPageEdit(value: unknown): value is PageEdit {
         return false;
     const height = value.height as number;
     const insertImages: unknown = value.insertImages ?? [], removeImages: unknown = value.removeImages ?? [];
+    const insertTexts: unknown = value.insertTexts ?? [], removeTexts: unknown = value.removeTexts ?? [];
     return Array.isArray(value.insert) && value.insert.length <= 1000 && value.insert.every(stroke => validNoteStroke(stroke, height) && stroke.complete)
         && Array.isArray(value.remove) && value.remove.length <= 1000 && value.remove.every(validIdentity)
         && new Set(value.insert.map(stroke => stroke.id)).size === value.insert.length && new Set(value.remove).size === value.remove.length
         && Array.isArray(insertImages) && insertImages.length <= MAX_PAGE_IMAGES && insertImages.every(image => validPageImage(image, height))
         && Array.isArray(removeImages) && removeImages.length <= MAX_PAGE_IMAGES && removeImages.every(validIdentity)
-        && new Set(insertImages.map(image => (image as PageImage).id)).size === insertImages.length && new Set(removeImages).size === removeImages.length;
+        && new Set(insertImages.map(image => (image as PageImage).id)).size === insertImages.length && new Set(removeImages).size === removeImages.length
+        && Array.isArray(insertTexts) && insertTexts.length <= MAX_PAGE_TEXTS && insertTexts.every(box => validPageText(box, height))
+        && Array.isArray(removeTexts) && removeTexts.length <= MAX_PAGE_TEXTS && removeTexts.every(validIdentity)
+        && new Set(insertTexts.map(box => (box as PageText).id)).size === insertTexts.length && new Set(removeTexts).size === removeTexts.length;
 }
 export function validNotebookSnapshot(value: unknown): value is NotebookSnapshot {
     if (!record(value) || value.type !== "notebook" || !record(value.notebook) || !validIdentity(value.notebook.id)
@@ -125,6 +136,8 @@ export function validNotebookSnapshot(value: unknown): value is NotebookSnapshot
                 return false;
             ids.add(page.id);
             if (page.images !== undefined && !validPageImages(page.images, page.height as number, page.nextOrder as number))
+                return false;
+            if (page.texts !== undefined && !validPageTexts(page.texts, page.height as number, page.nextOrder as number))
                 return false;
             const strokes = new Set<string>(), orders = new Set<number>();
             for (let index = 0; index < page.strokes.length; index++) {
@@ -153,6 +166,17 @@ function validPageImages(value: unknown, height: number, nextOrder: number): boo
         if (!validPageImage(image, height) || ids.has(image.id) || image.order >= nextOrder)
             return false;
         ids.add(image.id);
+    }
+    return true;
+}
+function validPageTexts(value: unknown, height: number, nextOrder: number): boolean {
+    if (!Array.isArray(value) || value.length > MAX_PAGE_TEXTS)
+        return false;
+    const ids = new Set<string>();
+    for (const box of value) {
+        if (!validPageText(box, height) || ids.has(box.id) || box.order >= nextOrder)
+            return false;
+        ids.add(box.id);
     }
     return true;
 }
@@ -224,6 +248,19 @@ export function applyNotebookEvent(notebook: Notebook, event: NotebookEvent): vo
             if (images.length > MAX_PAGE_IMAGES)
                 throw new Error("Too many images on this page.");
             page.images = images.sort((a, b) => a.order - b.order);
+        }
+        if (event.edit.insertTexts?.length || event.edit.removeTexts?.length) {
+            const removed = new Set(event.edit.removeTexts ?? []);
+            const texts = (page.texts ?? []).filter(box => !removed.has(box.id));
+            for (const box of event.edit.insertTexts ?? []) {
+                if (texts.some(existing => existing.id === box.id))
+                    throw new Error("Conflicting text box identity.");
+                texts.push(structuredClone(box));
+                page.nextOrder = Math.max(page.nextOrder, box.order + 1);
+            }
+            if (texts.length > MAX_PAGE_TEXTS)
+                throw new Error("Too many text boxes on this page.");
+            page.texts = texts.sort((a, b) => a.order - b.order);
         }
         page.height = Math.max(page.height, event.edit.height);
         return;

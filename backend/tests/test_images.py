@@ -147,3 +147,40 @@ def test_image_budget_is_separate_from_pdfs_and_old_databases_gain_the_kind_colu
     store.put_asset(IDENTITY, hashlib.sha256(png()).hexdigest(), png(), 'image')
     assert store.asset(IDENTITY, hashlib.sha256(png()).hexdigest()) is None, 'images are not readable as PDFs'
     assert store.asset(IDENTITY, hashlib.sha256(png()).hexdigest(), 'image') == png()
+
+
+def text_box(identity, text='Skript: https://example.org', order=1, **extra):
+    return {'id': identity, 'x': 100, 'y': 200, 'width': 500, 'text': text, 'size': 'medium', 'color': '#243147', 'code': False, 'order': order, **extra}
+
+
+def text_edit(sequence, insert=(), remove=(), head=NEXT):
+    edit = {'id': f'text-edit-{sequence}', 'pageId': 'b', 'insert': [], 'remove': [], 'height': 6400}
+    if insert: edit['insertTexts'] = list(insert)
+    if remove: edit['removeTexts'] = list(remove)
+    return {'type': 'commit', 'sequence': sequence, 'head': head, 'change': {'type': 'edit', 'edit': edit}}
+
+
+def test_text_boxes_are_committed_shown_to_readers_and_kept_across_structure_changes(tmp_path):
+    with TestClient(create_app(tmp_path)) as client, connect(client, '/ws/sync/v2/publish') as writer:
+        hello(writer); recover(writer)
+        with connect(client, f'/ws/notebook/v2/view/{IDENTITY}') as viewer:
+            viewer.receive_json(); viewer.receive_json()
+            subscribe(viewer, 'b')
+            writer.send_json(text_edit(1, [text_box('note')])); assert writer.receive_json()['type'] == 'ack'
+            assert viewer.receive_json()['type'] == 'extent'
+            assert viewer.receive_json()['edit']['insertTexts'][0]['text'] == 'Skript: https://example.org'
+        writer.send_json(text_edit(2, [text_box('note', 'Neu')], ['note'], head='c' * 64)); assert writer.receive_json()['type'] == 'ack'
+        change = {'type': 'structure', 'notebook': metadata(snapshot())['notebook']}; change['notebook']['title'] = 'Renamed'
+        writer.send_json({'type': 'commit', 'sequence': 3, 'head': 'd' * 64, 'change': change}); assert writer.receive_json()['type'] == 'ack'
+        assert PageStore(tmp_path).page(IDENTITY, 'b')[0]['texts'] == [text_box('note', 'Neu')]
+        writer.send_json(text_edit(4, [], ['note'], head='e' * 64)); assert writer.receive_json()['type'] == 'ack'
+        assert 'texts' not in PageStore(tmp_path).page(IDENTITY, 'b')[0]
+
+
+def test_invalid_text_boxes_are_rejected(tmp_path):
+    for bad in (text_box('t', '   '), text_box('t', 'x' * 5001), text_box('t', size='huge'), text_box('t', color='red'),
+                text_box('t', width=30), text_box('t', x=900), text_box('t', code='yes'), text_box('t', extra=1)):
+        with TestClient(create_app(tmp_path)) as client, connect(client, '/ws/sync/v2/publish') as writer:
+            hello(writer); recover(writer)
+            writer.send_json(text_edit(1, [bad]))
+            with pytest.raises(WebSocketDisconnect): writer.receive_json()

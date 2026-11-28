@@ -186,7 +186,7 @@ class PagedRoom(NotebookRoom):
         page, _ = await asyncio.to_thread(store.page, identity, page_id)
         target = self.pages[page_id]
         loaded = Page.model_validate(page)
-        target.strokes, target.images = loaded.strokes, loaded.images
+        target.strokes, target.images, target.texts = loaded.strokes, loaded.images, loaded.texts
         target.height, target.next_order = page["height"], page["nextOrder"]
         self.point_count = sum(len(s.points) for s in target.strokes)
         self.loaded_page = page_id
@@ -468,6 +468,7 @@ def register_paged(app: FastAPI, store: PageStore, access: PublisherAccess, acco
                                 live.id = f"durable-{value['sequence']}"
                                 live.remove = list(dict.fromkeys(live.remove + [s.id for s in live.insert]))
                                 live.remove_images = list(dict.fromkeys(live.remove_images + [i.id for i in live.insert_images]))
+                                live.remove_texts = list(dict.fromkeys(live.remove_texts + [t.id for t in live.insert_texts]))
                                 if room.active and room.active[1] in live.remove:
                                     room.active = None
                                 room.apply(client, EditEvent(type="edit", edit=live))

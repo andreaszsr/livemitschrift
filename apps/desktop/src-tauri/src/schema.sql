@@ -9,3 +9,5 @@ CREATE TABLE outbox(document_id TEXT NOT NULL REFERENCES documents(id),sequence 
 CREATE TABLE sync_targets(document_id TEXT NOT NULL REFERENCES documents(id),server TEXT NOT NULL,enabled INTEGER NOT NULL,PRIMARY KEY(document_id));
 CREATE TABLE images(id TEXT PRIMARY KEY,page_id TEXT NOT NULL REFERENCES pages(id),position INTEGER NOT NULL CHECK(position>=0),data TEXT NOT NULL);
 CREATE INDEX image_page ON images(page_id);
+CREATE TABLE texts(id TEXT PRIMARY KEY,page_id TEXT NOT NULL REFERENCES pages(id),position INTEGER NOT NULL CHECK(position>=0),data TEXT NOT NULL);
+CREATE INDEX text_page ON texts(page_id);

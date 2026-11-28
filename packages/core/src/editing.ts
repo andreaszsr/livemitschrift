@@ -1,6 +1,12 @@
 import type { Point, Stroke } from "./protocol.js";
 import type { PageEdit } from "./notebook.js";
 import type { PageImage } from "./images.js";
+import type { PageText } from "./texts.js";
+/** Image and text box changes of one edit: objects inserted and the replaced or deleted originals. */
+export interface PageObjects {
+    images?: {insert: PageImage[]; removed: PageImage[]};
+    texts?: {insert: PageText[]; removed: PageText[]};
+}
 import { createStrokeId } from "./session.js";
 export function hitStroke(stroke: Stroke, from: Point, to: Point, radius: number): boolean {
     const distance = (p: Point, a: Point, b: Point): number => {
@@ -30,10 +36,11 @@ export class EditHistory {
     private future: HistoryEntry[] = [];
     get canUndo(): boolean { return this.past.length > 0; }
     get canRedo(): boolean { return this.future.length > 0; }
-    /** Record one undoable step; image changes are optional and travel in the same edit. */
-    record(pageId: string, height: number, insert: Stroke[], removed: Stroke[], images: {insert: PageImage[]; removed: PageImage[]} = {insert: [], removed: []}): PageEdit {
-        const forward = this.edit(pageId, height, insert, removed.map(stroke => stroke.id), images.insert, images.removed.map(image => image.id));
-        const backward = this.edit(pageId, height, removed, insert.map(stroke => stroke.id), images.removed, images.insert.map(image => image.id));
+    /** Record one undoable step; image and text box changes are optional and travel in the same edit. */
+    record(pageId: string, height: number, insert: Stroke[], removed: Stroke[], objects: PageObjects = {}): PageEdit {
+        const images = objects.images ?? {insert: [], removed: []}, texts = objects.texts ?? {insert: [], removed: []};
+        const forward = this.edit(pageId, height, insert, removed.map(stroke => stroke.id), {images: {insert: images.insert, removed: images.removed}, texts: {insert: texts.insert, removed: texts.removed}});
+        const backward = this.edit(pageId, height, removed, insert.map(stroke => stroke.id), {images: {insert: images.removed, removed: images.insert}, texts: {insert: texts.removed, removed: texts.insert}});
         this.past.push({ forward, backward });
         if (this.past.length > 200)
             this.past.shift();
@@ -44,10 +51,12 @@ export class EditHistory {
         return null; this.future.push(entry); return { ...structuredClone(entry.backward), id: createStrokeId() }; }
     redo(): PageEdit | null { const entry = this.future.pop(); if (!entry)
         return null; this.past.push(entry); return { ...structuredClone(entry.forward), id: createStrokeId() }; }
-    private edit(pageId: string, height: number, insert: Stroke[], remove: string[], insertImages: PageImage[], removeImages: string[]): PageEdit {
+    private edit(pageId: string, height: number, insert: Stroke[], remove: string[], objects: Required<PageObjects>): PageEdit {
         const edit: PageEdit = { id: createStrokeId(), pageId, height, insert: structuredClone(insert), remove: [...remove] };
-        // Stroke-only edits keep their previous shape.
-        if (insertImages.length || removeImages.length) { edit.insertImages = structuredClone(insertImages); edit.removeImages = [...removeImages]; }
+        // Stroke-only edits keep their previous shape; object lists appear only when used.
+        const {images, texts} = objects;
+        if (images.insert.length || images.removed.length) { edit.insertImages = structuredClone(images.insert); edit.removeImages = images.removed.map(image => image.id); }
+        if (texts.insert.length || texts.removed.length) { edit.insertTexts = structuredClone(texts.insert); edit.removeTexts = texts.removed.map(box => box.id); }
         return edit;
     }
 }

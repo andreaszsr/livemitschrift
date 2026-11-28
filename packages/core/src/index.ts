@@ -15,3 +15,4 @@ export * from "./selection.js";
 export * from "./straight-line.js";
 export * from "./shapes.js";
 export * from "./images.js";
+export * from "./texts.js";
