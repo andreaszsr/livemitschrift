@@ -131,6 +131,11 @@ Button names are quoted as they appear in the German UI.
   tap selects an image; moving, corner resizing, ⌘C/⌘V, ⌫ and undo work, and
   writing on an image never moves it. With sharing on, readers see the image
   after a moment; reader and desktop PDF exports include it.
+- **Text boxes (T).** Type a sentence, a long URL and indented code in three
+  sizes; lines break only at spaces and look the same in the app, the reader
+  view (phone and laptop) and both PDF exports, where the text can be copied
+  and links clicked. Lasso: move, width handles, double tap or Enter to edit,
+  ⌫, ⌘C/⌘V and undo. In the app, a link opens only from a selected box.
 - **Lasso (S).** Select strokes by circling them and drag the selection. ⌘C, ⌘X
   and ⌘V work, also onto another page. Delete removes the selection. Undo
   reverts each step. Readers see the result.

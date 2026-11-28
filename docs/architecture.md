@@ -62,8 +62,19 @@ system does not support collaborative editing.
     ink, newest on top; moves and resizes are remove + insert edits like lasso
     moves. The editor re-encodes inserted images (≤ 2400 px, JPEG or PNG with
     transparency), dropping EXIF metadata.
+  - Text boxes: position, width, plain text, size, colour and a code flag in a
+    `texts` table (same schema version 2). The height is never stored: it
+    follows from `layoutText` in `packages/core`, which breaks lines only at
+    spaces using the advance widths of the bundled fonts
+    (`text-metrics.ts`). The editor, the reader view (`TextLayer`) and PDF
+    exports draw exactly those lines without kerning or ligatures, so text
+    wraps identically everywhere. Text is inserted as text nodes and safe
+    links only; links in the app open externally (`open_link`, https and
+    mailto only) and only from a selected box.
   - PDF export and portable `.livemitschrift` backups (format version 2 with
-    `image/` entries when a notebook has images; version 1 otherwise).
+    `image/` entries or text boxes when a notebook has them; version 1
+    otherwise). Exports embed the text box fonts with fontkit and add link
+    annotations.
   - PDF export writes into a folder the user chose; the folder (per notebook)
     and the last exported page (per topic) are local preferences. The Rust
     command accepts only a plain file name and asks before replacing a file.
@@ -120,6 +131,9 @@ system does not support collaborative editing.
 - **Ownership.** Each notebook has one owner. See [SECURITY.md](../SECURITY.md).
 - **TLS.** TLS terminates at Caddy. Forwarded headers are trusted only from
   Caddy's fixed private address. The backend publishes no host port.
+- **Text boxes** are part of the page metadata like image placements; the
+  server validates their fields and length (at most 5000 characters, 50 boxes
+  per page) and keeps them across structure changes.
 - **Images.** Placements are part of the page metadata; files share the assets
   table (column `kind`, added without a schema version change so a 0.2 server
   can still open the database). Readers get only images a page currently shows,
